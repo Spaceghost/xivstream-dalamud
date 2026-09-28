@@ -41,6 +41,14 @@ memory = ""                   # limits.memory, "" = unlimited
 gpu = ""                      # PCI address, "" = the first discrete GPU
 autostart = true              # start at boot once the listen address exists
 
+[incus.cpu_policy]            # optional; both CPU selections enable it
+busy_cpus = ""                # e.g. "4-7" pins four cores, or "4" allows any four
+idle_cpus = ""                # e.g. "0-7" pins all eight, or "8" allows any eight
+busy_threshold_percent = 25   # non-game share of total machine CPU
+idle_threshold_percent = 10   # must stay below the busy threshold
+busy_after_seconds = 15       # sustained load before restricting the game
+idle_after_seconds = 90       # sustained idle before restoring its CPUs
+
 [selkies]                     # backend = "selkies"
 port = 8080
 user = "ffxiv"
@@ -68,3 +76,32 @@ companions = true             # e.g. ghostty-agent for GhosttyDalamud
 
 State directory (generated passwords, the game's measured VRAM peak):
 `/var/lib/xivstream` as root, `~/.local/state/xivstream` otherwise.
+
+## Choosing busy and idle CPUs
+
+On an Incus Linux host, first list the CPU IDs and their physical cores:
+
+```sh
+xivstream cpu-config --list
+sudo xivstream cpu-config --busy 4-7 --idle 0-7
+sudo xivstream apply --cpu-policy-only --yes
+```
+
+The numbers above are examples for an eight-CPU machine. A bare `4` means any four logical CPUs;
+`4-7` or `0,2,4,6` selects specific IDs. Use `0-0` to select just CPU 0. SMT siblings share a
+physical core; consult the CORE column before choosing. Both selections are checked against online CPUs.
+These settings are also available in `wizard --advanced` and are stored in the main TOML file.
+
+CPU-only apply is supported on systemd hosts and does not start or restart the container. Normal apply
+also installs the service; OpenRC and the NixOS module provide it too. The policy starts with the busy
+selection and expands only after a fresh idle window. CPU use from the entire game container, including
+Sunshine, is subtracted before evaluating host load. These are CPU restrictions, not memory/GPU limits;
+other processes can still use the selected CPUs. The service does not create exclusive core reservations.
+
+Read `/run/xivstream-cpu-policy/status` for the mode, measurement and selected CPUs. To disable the policy
+and restore the static `[incus] cpu` setting on systemd:
+
+```sh
+sudo xivstream cpu-config --disable
+sudo xivstream apply --cpu-policy-only --yes
+```

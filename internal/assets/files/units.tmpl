@@ -75,6 +75,24 @@ ExecStart=/usr/local/bin/xivstream start-container
 [Install]
 WantedBy=multi-user.target
 {{end}}
+{{define "cpu-policy.service"}}[Unit]
+Description=xivstream: give FFXIV more CPUs only while the host is idle
+After=incus.service xivstream-container.service
+Wants=incus.service
+
+[Service]
+ExecStart=/usr/local/bin/xivstream cpu-policy
+Restart=on-failure
+RestartSec=5
+RuntimeDirectory=xivstream-cpu-policy
+NoNewPrivileges=yes
+ProtectHome=yes
+ProtectSystem=strict
+RestrictAddressFamilies=AF_UNIX
+
+[Install]
+WantedBy=multi-user.target
+{{end}}
 {{define "gpu-share.service"}}[Unit]
 Description=xivstream: give the game the GPU's memory while it runs
 After=incus.service

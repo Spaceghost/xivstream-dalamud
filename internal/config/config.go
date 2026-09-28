@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -92,16 +93,31 @@ type Stream struct {
 }
 
 type Incus struct {
-	Container string `toml:"container"`
-	Image     string `toml:"image"`
-	CPU       string `toml:"cpu"`    // limits.cpu; empty = no limit
-	Memory    string `toml:"memory"` // limits.memory; empty = no limit
+	Container string    `toml:"container"`
+	Image     string    `toml:"image"`
+	CPU       string    `toml:"cpu"`    // limits.cpu; empty = no limit
+	Memory    string    `toml:"memory"` // limits.memory; empty = no limit
+	CPUPolicy CPUPolicy `toml:"cpu_policy"`
 	// GPU: PCI address of the card to pass through; empty = the first
 	// discrete GPU found at apply time.
 	GPU string `toml:"gpu"`
 	// Autostart: start the container at boot once the listen address exists.
 	Autostart bool `toml:"autostart"`
 }
+
+// CPUPolicy gives the game a selected CPU set while other host work is busy,
+// and expands it after the host remains idle. Empty BusyCPUs and IdleCPUs
+// disable the policy and leave Incus.CPU as the static limit.
+type CPUPolicy struct {
+	BusyCPUs             string `toml:"busy_cpus"`
+	IdleCPUs             string `toml:"idle_cpus"`
+	BusyThresholdPercent int    `toml:"busy_threshold_percent"`
+	IdleThresholdPercent int    `toml:"idle_threshold_percent"`
+	BusyAfterSeconds     int    `toml:"busy_after_seconds"`
+	IdleAfterSeconds     int    `toml:"idle_after_seconds"`
+}
+
+func (p CPUPolicy) Enabled() bool { return p.BusyCPUs != "" || p.IdleCPUs != "" }
 
 type Share struct {
 	Mode string `toml:"mode"`
@@ -169,7 +185,10 @@ func Default() Config {
 		Stream: Stream{
 			Name: "ffxiv", PortBase: 47989, MaxBitrateKbps: 50000, Codecs: "h264", Gamepad: "x360", WebUser: "ffxiv",
 		},
-		Incus: Incus{Container: "ffxiv", Image: "images:fedora/43", Autostart: true},
+		Incus: Incus{
+			Container: "ffxiv", Image: "images:fedora/43", Autostart: true,
+			CPUPolicy: CPUPolicy{BusyThresholdPercent: 25, IdleThresholdPercent: 10, BusyAfterSeconds: 15, IdleAfterSeconds: 90},
+		},
 		Share: Share{
 			Mode: ShareNone, Gateway: "http://127.0.0.1:41881", Owner: "ffxiv", Margin: 1.25, GraceSeconds: 20,
 		},
@@ -313,7 +332,43 @@ func (c Config) Validate() error {
 	if c.Game.Width <= 0 || c.Game.Height <= 0 || c.Game.FPS <= 0 {
 		return fmt.Errorf("game width, height and fps must be positive")
 	}
+	if p := c.Incus.CPUPolicy; p.Enabled() {
+		if c.Topology != TopologyIncus {
+			return fmt.Errorf("incus.cpu_policy needs topology = %q", TopologyIncus)
+		}
+		if !validCPUSet(p.BusyCPUs) || !validCPUSet(p.IdleCPUs) {
+			return fmt.Errorf("incus.cpu_policy busy_cpus and idle_cpus must both be CPU counts or lists such as %q and %q", "4-7", "0-7")
+		}
+		if p.IdleThresholdPercent < 0 || p.BusyThresholdPercent > 100 || p.IdleThresholdPercent >= p.BusyThresholdPercent {
+			return fmt.Errorf("incus.cpu_policy thresholds must satisfy 0 <= idle < busy <= 100")
+		}
+		if p.BusyAfterSeconds <= 0 || p.IdleAfterSeconds <= 0 {
+			return fmt.Errorf("incus.cpu_policy transition times must be positive")
+		}
+	}
 	return nil
+}
+
+func validCPUSet(value string) bool {
+	if !strings.ContainsAny(value, ",-") {
+		n, err := strconv.Atoi(value)
+		return err == nil && n > 0 && strconv.Itoa(n) == value
+	}
+	for _, item := range strings.Split(value, ",") {
+		bounds := strings.Split(item, "-")
+		if len(bounds) > 2 {
+			return false
+		}
+		previous := -1
+		for _, bound := range bounds {
+			n, err := strconv.Atoi(bound)
+			if err != nil || n < 0 || strconv.Itoa(n) != bound || n < previous {
+				return false
+			}
+			previous = n
+		}
+	}
+	return true
 }
 
 // Encode renders the config as TOML, with a header saying where it came from.

@@ -24,7 +24,7 @@ func TestEveryTemplateRendersForEveryBackend(t *testing.T) {
 			v := view{Config: c, InContainer: true, NVIDIA: nvidia, Headless: true, Encoder: "nvenc",
 				LauncherCommand: "/opt/xivlauncher/XIVLauncher.Core", HostUID: 1001000, HostGID: 1000104, InputMarks: []string{"libvirtualhid"}}
 			for _, name := range []string{"session.sh.tmpl", "launcher.sh.tmpl", "stream.sh.tmpl", "sway.conf.tmpl", "sunshine.conf.tmpl",
-				"session.service", "keyring.service", "prepare.service", "input-bridge.service", "container.service", "gpu-share.service", "udev.rules", "wireplumber.conf"} {
+				"session.service", "keyring.service", "prepare.service", "input-bridge.service", "container.service", "cpu-policy.service", "gpu-share.service", "udev.rules", "wireplumber.conf"} {
 				out, err := Render(name, v)
 				if err != nil {
 					t.Fatalf("%s/%v/%s: %v", backend, nvidia, name, err)

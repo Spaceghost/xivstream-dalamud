@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/Spaceghost/xivstream-dalamud/internal/config"
+	"github.com/Spaceghost/xivstream-dalamud/internal/cpupolicy"
 	"github.com/Spaceghost/xivstream-dalamud/internal/detect"
 	"github.com/Spaceghost/xivstream-dalamud/internal/gpuprep"
 	"github.com/Spaceghost/xivstream-dalamud/internal/gpushare"
@@ -62,6 +63,10 @@ func main() {
 		err = runPair(args)
 	case "gpu-share":
 		err = runGPUShare(args)
+	case "cpu-policy":
+		err = runCPUPolicy(args)
+	case "cpu-config":
+		err = runCPUConfig(args)
 	case "input-bridge":
 		var b *inputbridge.Bridge
 		if b, err = inputbridge.New(); err == nil {
@@ -96,18 +101,32 @@ func usage() {
   xivstream apply [--yes]           set up (or bring up to date) from the config
       --when-idle                      wait for the game to exit first (safe while playing)
   xivstream doctor                  check the setup
+  xivstream cpu-config --list        show CPU IDs before choosing cores
+  xivstream cpu-config --busy 4-7 --idle 0-7   save busy/idle CPU selections
   xivstream pair PIN [NAME]         pair a Moonlight client showing PIN
   xivstream version
 
   --config PATH   use this config (default `+config.Path()+`)
 
 Services (run by the units apply installs):
+  cpu-policy          yield the game's selected CPUs while the host is busy
   gpu-share [--stop]   give the game the GPU's memory while it runs
   input-bridge         announce the stream's input devices inside a container
   prepare-gpu          fix the passed-through GPU's manifests and nodes
   render-node          print the streaming GPU's render node
   start-container      start the Incus container once its stream address exists
 `)
+}
+
+func runCPUPolicy(args []string) error {
+	fs := flag.NewFlagSet("cpu-policy", flag.ExitOnError)
+	path := configFlag(fs)
+	_ = fs.Parse(args)
+	c, err := load(*path)
+	if err != nil {
+		return err
+	}
+	return cpupolicy.Run(c)
 }
 
 func configFlag(fs *flag.FlagSet) *string {
@@ -186,12 +205,18 @@ func runPlan(args []string) error {
 	fs := flag.NewFlagSet("plan", flag.ExitOnError)
 	path := configFlag(fs)
 	verbose := fs.Bool("v", false, "show commands, reasons and file diffs")
+	cpuOnly := fs.Bool("cpu-policy-only", false, "only plan the CPU policy service")
 	_ = fs.Parse(args)
 	c, err := load(*path)
 	if err != nil {
 		return err
 	}
-	s, err := steps.Build(c, detect.Run())
+	var s []plan.Step
+	if *cpuOnly {
+		s, err = steps.CPUOnly(c, "systemd")
+	} else {
+		s, err = steps.Build(c, detect.Run())
+	}
 	if err != nil {
 		return err
 	}
@@ -204,10 +229,29 @@ func runApply(args []string) error {
 	path := configFlag(fs)
 	yes := fs.Bool("yes", false, "do not ask for confirmation")
 	whenIdle := fs.Bool("when-idle", false, "wait until the game is not running, then apply (implies --yes)")
+	cpuOnly := fs.Bool("cpu-policy-only", false, "apply only CPU policy configuration and service; safe while playing")
 	_ = fs.Parse(args)
 	c, err := load(*path)
 	if err != nil {
 		return err
+	}
+	if *cpuOnly {
+		if os.Geteuid() != 0 {
+			return errors.New("CPU policy apply needs sudo")
+		}
+		s, err := steps.CPUOnly(c, "systemd")
+		if err != nil {
+			return err
+		}
+		if !*yes {
+			plan.Print(os.Stdout, plan.Evaluate(s), false)
+			fmt.Print("\nApply CPU policy? [y/N] ")
+			answer, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+			if strings.ToLower(strings.TrimSpace(answer)) != "y" {
+				return nil
+			}
+		}
+		return plan.Apply(os.Stdout, s)
 	}
 	if *whenIdle {
 		*yes = true

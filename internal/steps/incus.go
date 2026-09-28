@@ -421,6 +421,9 @@ func (b *builder) hostServices(host plan.Local) []plan.Step {
 			"Write the container start service", "Incus refuses to start a container whose forwards listen on an address that does not exist yet (Tailscale comes up late in boot)."))
 		enable = append(enable, "xivstream-container.service")
 	}
+	if c.Topology == config.TopologyIncus {
+		s = append(s, b.cpuPolicySteps()...)
+	}
 	if c.Share.Mode != config.ShareNone {
 		s = append(s, plan.File(host, "/etc/systemd/system/xivstream-gpu-share.service", render("gpu-share.service", v), 0o644, "",
 			"Write the GPU sharing service", "Gives the game the GPU's memory while it runs ("+c.Share.Mode+")."))
@@ -462,6 +465,12 @@ depend() {
 	}
 	var s []plan.Step
 	var names []string
+	if c.Incus.CPUPolicy.Enabled() {
+		settings, _ := json.Marshal(c.Incus.CPUPolicy)
+		s = append(s, plan.File(host, "/etc/init.d/xivstream-cpu-policy",
+			append(script("cpu-policy", "yield game CPUs while the host is busy", "cpu-policy", ""), []byte("\n# CPU policy: "+string(settings)+"\n")...), 0o755, "", "Write the CPU policy service (OpenRC)", ""))
+		names = append(names, "xivstream-cpu-policy")
+	}
 	if c.Topology == config.TopologyIncus && c.Incus.Autostart {
 		s = append(s, plan.File(host, "/etc/init.d/xivstream-container",
 			[]byte(strings.Replace(string(script("container", "start the "+c.Incus.Container+" container once its stream address exists", "start-container", "")),
@@ -481,6 +490,18 @@ depend() {
 				_, err := sys.Output("sh", "-c", "rc-update add "+n+" default && rc-service "+n+" start")
 				return err
 			}))
+	}
+	if c.Incus.CPUPolicy.Enabled() {
+		restart := plan.Command(host, "Restart CPU policy after changes", "", nil, "rc-service", "xivstream-cpu-policy", "restart")
+		restart.IfChanged = true
+		s = append(s, restart)
+	} else if sys.Exists("/etc/init.d/xivstream-cpu-policy") {
+		s = append(s, step(host, "Disable old CPU policy (OpenRC)", "", []string{"rc-service xivstream-cpu-policy stop", "rc-update del xivstream-cpu-policy default"}, nil, func() error {
+			_, _ = sys.Output("rc-service", "xivstream-cpu-policy", "stop")
+			_, _ = sys.Output("rc-update", "del", "xivstream-cpu-policy", "default")
+			_, err := sys.Output("incus", "--force-local", "config", "set", c.Incus.Container, "limits.cpu="+c.Incus.CPU)
+			return err
+		}))
 	}
 	return s
 }
