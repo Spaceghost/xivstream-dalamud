@@ -47,6 +47,12 @@ RUN dnf -y install --setopt=install_weak_deps=False \
       iproute iputils hostname file less vim-minimal glibc-langpack-en tzdata \
  && dnf clean all
 
+# Fedora's sway carries cap_sys_nice as a file capability. The session runs
+# with no new privileges and no capabilities, and execve of a file whose
+# capabilities cannot be granted fails (EPERM), so drop them: sway only uses it
+# to raise its own priority.
+RUN setcap -r /usr/bin/sway 2>/dev/null || true
+
 # The player: uid/gid 1000, the owner of the shared home. -M: the home is never
 # created here; /home/player is the host's subvolume, bind-mounted by Wolf.
 RUN groupadd -g 1000 player \
