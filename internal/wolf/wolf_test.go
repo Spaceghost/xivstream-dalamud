@@ -64,7 +64,7 @@ func TestQuadlet(t *testing.T) {
 	s := fixture()
 	q := Quadlet(s)
 	golden(t, "wolf.container", q)
-	for _, want := range []string{"Image=" + ServerImage, "AddDevice=/dev/nvidia-uvm", "AddDevice=-/dev/nvidia-uvm-tools", "ExecStartPre=/usr/bin/nvidia-modprobe -u -c0 -c1", "Volume=nvidia-driver-vol:/usr/nvidia:rw",
+	for _, want := range []string{"Image=" + ServerImage, "AddDevice=/dev/nvidia-uvm", "AddDevice=-/dev/nvidia-uvm-tools", "ExecStartPre=-/usr/bin/nvidia-modprobe -u -c0", "Volume=nvidia-driver-vol:/usr/nvidia:rw",
 		"Environment=NVIDIA_DRIVER_VOLUME_NAME=nvidia-driver-vol", "Environment=WOLF_RENDER_NODE=/dev/dri/renderD129",
 		"Environment=WOLF_USE_ZERO_COPY=FALSE", "Environment=WOLF_STOP_CONTAINER_ON_EXIT=TRUE", "Conflicts=xivstream-sunshine.service",
 		"RequiresMountsFor=/var/lib/xivstream/home", "ExecStartPre=/usr/local/bin/xivstream wolf-preflight",
@@ -172,6 +172,13 @@ func TestUnits(t *testing.T) {
 	f := s.Wolf.Forwards[0]
 	golden(t, "xivstream-fwd-almanac-gateway.socket", ForwardSocket(s, f))
 	golden(t, "xivstream-fwd-almanac-gateway.service", ForwardService(s, f))
+	if bytes.Contains(FallbackUnitFile(s), []byte("[Install]")) {
+		t.Error("with Wolf the default, the fallback is not started at boot")
+	}
+	s.Wolf.Autostart = false
+	if !bytes.Contains(FallbackUnitFile(s), []byte("[Install]\nWantedBy=multi-user.target\n")) || bytes.Contains(Quadlet(s), []byte("[Install]")) {
+		t.Error("Wolf staged (autostart = false): the Sunshine fallback starts at boot, Wolf does not")
+	}
 	if s.HomeUnit() != "var-lib-xivstream-home.mount" {
 		t.Errorf("home unit %s", s.HomeUnit())
 	}

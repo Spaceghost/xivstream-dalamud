@@ -294,9 +294,10 @@ func (b *builder) wolf() ([]plan.Step, error) {
 	for _, f := range c.Wolf.Forwards {
 		base := wolf.ForwardUnit(f)
 		sockets = append(sockets, base+".socket")
-		add(ch.track("units", plan.File(host, "/etc/systemd/system/"+base+".socket", wolf.ForwardSocket(s, f), 0o644, "",
-			"Write the "+f.Name+" forward ("+fmt.Sprintf("%s:%d to %s", gw, f.Port, f.Target)+")", "")))
-		add(ch.track("units", plan.File(host, "/etc/systemd/system/"+base+".service", wolf.ForwardService(s, f), 0o644, "", "Write the "+f.Name+" relay", "")))
+		add(ch.track("units", ch.track("forwards", plan.File(host, "/etc/systemd/system/"+base+".socket", wolf.ForwardSocket(s, f), 0o644, "",
+			"Write the "+f.Name+" forward ("+fmt.Sprintf("%s:%d to %s", gw, f.Port, f.Target)+")", ""))))
+		add(ch.track("units", ch.track("forwards", plan.File(host, "/etc/systemd/system/"+base+".service", wolf.ForwardService(s, f), 0o644, "",
+			"Write the "+f.Name+" relay", ""))))
 	}
 	if stale := staleForwards(c.Wolf.Forwards); len(stale) > 0 {
 		add(step(host, "Remove forwards no longer configured", "", []string{"systemctl disable --now " + strings.Join(stale, " ")}, nil,
@@ -316,7 +317,7 @@ func (b *builder) wolf() ([]plan.Step, error) {
 		add(step(host, "Start the session's forwards", "Socket units on the gateway (FreeBind: the address exists only while the network is up).",
 			[]string{"systemctl enable --now " + strings.Join(sockets, " ")},
 			func() (bool, error) {
-				if ch["units"] {
+				if ch["forwards"] {
 					return false, nil
 				}
 				for _, sock := range sockets {
@@ -330,10 +331,21 @@ func (b *builder) wolf() ([]plan.Step, error) {
 				if err := daemonReload(); err != nil {
 					return err
 				}
-				_, err := sys.Output(append([]string{"systemctl", "enable", "--now"}, sockets...)...)
-				if err == nil {
-					_, err = sys.Output(append([]string{"systemctl", "restart"}, sockets...)...)
+				if _, err := sys.Output(append([]string{"systemctl", "enable", "--now"}, sockets...)...); err != nil {
+					return err
 				}
+				if !ch["forwards"] {
+					return nil
+				}
+				// Changed: a socket only takes its new address once restarted, and a
+				// socket whose relay is running refuses to restart (open
+				// connections end here).
+				var relays []string
+				for _, sock := range sockets {
+					relays = append(relays, strings.TrimSuffix(sock, ".socket")+".service")
+				}
+				_, _ = sys.Output(append([]string{"systemctl", "stop"}, relays...)...)
+				_, err := sys.Output(append([]string{"systemctl", "restart"}, sockets...)...)
 				return err
 			}))
 	}
@@ -341,8 +353,28 @@ func (b *builder) wolf() ([]plan.Step, error) {
 	add(ch.track("wolf", plan.File(host, wolf.QuadletPath, wolf.Quadlet(s), 0o644, "",
 		"Write Wolf's Quadlet unit", "Rootful (Wolf creates device cgroup rules for each session), the NVIDIA driver volume, a pinned image; never with the Incus game running or the home unmounted.")))
 	if s.Fallback {
-		add(ch.track("units", plan.File(host, "/etc/systemd/system/"+wolf.FallbackUnit, wolf.FallbackUnitFile(s), 0o644, "",
-			"Write the Sunshine fallback unit", "systemctl start "+wolf.FallbackUnit+" stops Wolf and starts the "+s.GameContainer+" container with Sunshine; systemctl start wolf switches back.")))
+		fb := wolf.FallbackUnit
+		if c.Wolf.Autostart {
+			// Before its file loses [Install], or disable could not find the link.
+			add(step(host, "Start Wolf at boot, not the Sunshine fallback", "", []string{"systemctl disable " + fb},
+				func() (bool, error) { return !enabled(fb), nil },
+				func() error { _, err := sys.Output("systemctl", "disable", fb); return err }))
+		}
+		add(ch.track("units", plan.File(host, "/etc/systemd/system/"+fb, wolf.FallbackUnitFile(s), 0o644, "",
+			"Write the Sunshine fallback unit", "systemctl start "+fb+" stops Wolf and starts the "+s.GameContainer+" container with Sunshine; systemctl start wolf switches back.")))
+		if !c.Wolf.Autostart {
+			add(step(host, "Start the Sunshine fallback at boot (Wolf is only staged)",
+				"wolf.autostart = false: the Incus container keeps coming up at boot, from the kept Sunshine config, until the switch.",
+				[]string{"systemctl enable " + fb},
+				func() (bool, error) { return enabled(fb), nil },
+				func() error {
+					if err := daemonReload(); err != nil {
+						return err
+					}
+					_, err := sys.Output("systemctl", "enable", fb) // not --now: the container already runs
+					return err
+				}))
+		}
 	}
 
 	add(step(host, "Put xivstream's app into Wolf's config", "Created from Wolf's pinned default (v7) when missing; otherwise merged: hostname, uuid, pairings and encoders are kept.",
@@ -365,13 +397,25 @@ func (b *builder) wolf() ([]plan.Step, error) {
 
 	steps = append(steps, b.cpuFence(host)...)
 
-	add(step(host, "Turn off the Incus-only services", "xivstream-container would start the Incus game at boot and xivstream-cpu-policy sets Incus limits; with Wolf, game-cpu-fence pins the game instead. The fallback unit starts the container when asked.",
-		[]string{"systemctl disable --now xivstream-container.service xivstream-cpu-policy.service"},
+	// xivstream-container would start the Incus game from the Wolf config (the
+	// fallback unit does it from the Sunshine one); cpu-policy sets Incus
+	// limits, and only runs with the fallback once Wolf is the default.
+	incusOnly := []string{"xivstream-container.service"}
+	if c.Wolf.Autostart {
+		incusOnly = append(incusOnly, "xivstream-cpu-policy.service")
+	}
+	add(step(host, "Turn off the Incus-only services", "With Wolf, game-cpu-fence pins the game's CPUs, and xivstream-sunshine.service starts the Incus container (with cpu-policy) when asked.",
+		[]string{"systemctl disable --now " + strings.Join(incusOnly, " ")},
 		func() (bool, error) {
-			return !enabled("xivstream-container.service") && !enabled("xivstream-cpu-policy.service"), nil
+			for _, u := range incusOnly {
+				if enabled(u) {
+					return false, nil
+				}
+			}
+			return true, nil
 		},
 		func() error {
-			for _, u := range []string{"xivstream-container.service", "xivstream-cpu-policy.service"} {
+			for _, u := range incusOnly {
 				if sys.Exists("/etc/systemd/system/" + u) {
 					if _, err := sys.Output("systemctl", "disable", "--now", u); err != nil {
 						return err

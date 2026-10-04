@@ -197,7 +197,10 @@ func MergeConfig(existing []byte, s Setup, o MergeOptions) ([]byte, error) {
 	// Codecs.
 	if gst, ok := cfg["gstreamer"].(map[string]any); ok {
 		if video, ok := gst["video"].(map[string]any); ok {
-			defVideo, _ := def["gstreamer"].(map[string]any)["video"].(map[string]any)
+			var defVideo map[string]any
+			if g, ok := def["gstreamer"].(map[string]any); ok {
+				defVideo, _ = g["video"].(map[string]any)
+			}
 			for _, list := range []string{"hevc_encoders", "av1_encoders"} {
 				switch {
 				case s.Wolf.Codecs == "h264":

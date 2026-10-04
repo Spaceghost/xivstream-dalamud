@@ -52,9 +52,10 @@ TimeoutStartSec=900
 TimeoutStopSec=60
 # The device nodes the [Container] section requires (nvidia0 and
 # nvidiactl; modeset; nvidia-uvm and -uvm-tools), whatever loaded so far.
-ExecStartPre=/usr/bin/nvidia-modprobe -c0
-ExecStartPre=/usr/bin/nvidia-modprobe -m
-ExecStartPre=/usr/bin/nvidia-modprobe -u -c0 -c1
+# A failure here shows up as podman's missing device, with its name.
+ExecStartPre=-/usr/bin/nvidia-modprobe -c0
+ExecStartPre=-/usr/bin/nvidia-modprobe -m
+ExecStartPre=-/usr/bin/nvidia-modprobe -u -c0
 # Refuses while the Incus game container runs, checks the home, clears
 # leftover session containers, and merges xivstream's app into Wolf's config.
 ExecStartPre=/usr/local/bin/xivstream wolf-preflight

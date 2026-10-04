@@ -212,24 +212,42 @@ Things to know:
 
 ### Switching an existing Incus/Sunshine setup to Wolf
 
-Do every step but the switch while playing; the switch is one planned stop.
+Stage while playing; the switch itself is one planned stop.
 
-1. Stage: `sudo xivstream apply --config /etc/xivstream/config.wolf.toml` with a copy of the
-   live config set to `topology = "host"`, `backend = "wolf"` (and `[wolf]` as needed). It
-   keeps the Sunshine config as `sunshine.toml`, builds the images and the driver volume,
-   creates and mounts the empty home, and writes every unit. It does not start Wolf while
-   the Incus container runs.
-2. Log out of the game and quit it. Then stop the container and snapshot it, stopped:
-   `sudo incus stop ffxiv --timeout 90 && sudo incus snapshot create ffxiv pre-wolf`.
-3. Copy the home in, once, by reflink (same filesystem, so it takes seconds or minutes, not
-   95 GB):
-   `sudo cp -a --reflink=always /var/lib/incus/storage-pools/default/containers/ffxiv/rootfs/home/player/. /var/lib/xivstream/home/`.
-4. `sudo systemctl start wolf`, pair each client (`sudo xivstream pair PIN`), and launch
-   "Final Fantasy XIV" from Moonlight.
+1. **Stage.** Copy the live config to `/etc/xivstream/config.wolf.toml`, set
+   `topology = "host"`, `backend = "wolf"` and, in `[wolf]`, `autostart = false` (plus
+   `allowed_clients`, `legacy_address` as needed), then
+   `sudo xivstream apply --config /etc/xivstream/config.wolf.toml`. It keeps the Sunshine
+   config as `sunshine.toml` and makes `xivstream-sunshine.service` what starts at boot (in
+   place of `xivstream-container`), so a reboot still brings Sunshine back. It also builds
+   the images and the driver volume, creates and mounts the (empty) home, and writes every
+   unit. Wolf stays stopped. The running game sees only a udev rule reload and
+   game-cpu-fence restarting (which gives the cores back for a moment and fences again).
+2. **Switch.** Log out of the game and quit it. Then:
+   - `sudo incus stop ffxiv --timeout 90 && sudo incus snapshot create ffxiv pre-wolf`
+     (snapshot taken stopped, so it is consistent);
+   - copy the home in, once, by reflink (same filesystem: seconds to minutes, no second
+     95 GB):
+     `sudo cp -a --reflink=always /var/lib/incus/storage-pools/default/containers/ffxiv/rootfs/home/player/. /var/lib/xivstream/home/`;
+   - set `autostart = true` and run the same apply again: Wolf becomes the boot default and
+     is started, `xivstream-cpu-policy` is disabled.
+3. **Pair** each client (`sudo xivstream pair PIN`, Moonlight sees a new host) and launch
+   "Final Fantasy XIV".
+4. **Optionally, once Wolf has proved itself**, give the fallback the same home, so the two
+   never diverge. With the container stopped:
+   `sudo incus config device add ffxiv home disk source=/var/lib/xivstream/home path=/home/player shift=true`.
+   Until then the fallback plays on the guest's own, older home.
 
-To roll back: quit the session in Moonlight, then `sudo systemctl start xivstream-sunshine`
-(it stops Wolf and its session containers first). The old guest's home is untouched by
-the copy; `incus snapshot restore ffxiv pre-wolf` returns it to the moment of the switch.
+To fall back: quit the session in Moonlight, then `sudo systemctl start xivstream-sunshine`
+(it stops Wolf and removes Wolf's session containers first). `sudo systemctl start wolf`
+switches back. To undo the switch entirely: fall back, remove Wolf's Quadlet
+(`sudo rm /etc/containers/systemd/wolf.container && sudo systemctl daemon-reload`), put the
+old config back (`sudo cp /etc/xivstream/sunshine.toml /etc/xivstream/config.toml`) and
+`sudo xivstream apply`, which re-enables `xivstream-container` and the CPU policy. The
+guest's own home is never written by the copy; `incus snapshot restore ffxiv pre-wolf`
+returns the container to the moment of the switch. The copy can be dropped with
+`sudo systemctl disable --now var-lib-xivstream-home.mount` and
+`sudo btrfs subvolume delete /var/lib/incus/storage-pools/default/xivstream-home`.
 
 ## Selkies
 

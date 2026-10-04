@@ -7,7 +7,8 @@
 Description=xivstream: Sunshine in the ffxiv Incus container (fallback for Wolf)
 Conflicts=wolf.service
 After=wolf.service xivstream-wolf-firewall.service incus.service tailscaled.service network-online.target
-Wants=incus.service network-online.target
+# cpu-policy (busy/idle limits.cpu for the container) runs while this does.
+Wants=incus.service network-online.target xivstream-cpu-policy.service
 
 [Service]
 Type=oneshot
@@ -17,5 +18,6 @@ Environment=XIVSTREAM_CONFIG=/etc/xivstream/sunshine.toml
 ExecStartPre=/usr/local/bin/xivstream wolf-cleanup
 ExecStart=/usr/local/bin/xivstream start-container
 ExecStop=/usr/local/bin/xivstream stop-container
+ExecStopPost=-/usr/bin/systemctl stop --no-block xivstream-cpu-policy.service
 TimeoutStartSec=600
 TimeoutStopSec=150

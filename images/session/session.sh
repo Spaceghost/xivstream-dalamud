@@ -45,11 +45,11 @@ if [ "${XIVSTREAM_SESSION_MODE:-game}" = game ]; then
 fi
 
 # sway, nested on Wolf's compositor (it picks its Wayland backend by itself
-# when WAYLAND_DISPLAY is set), sized to this client's stream.
+# when WAYLAND_DISPLAY is set), sized to this client's stream as GoW's
+# launch-comp.sh does (the refresh rate is Wolf's compositor's).
 conf=$XDG_RUNTIME_DIR/xivstream-sway.conf
 {
-    printf 'output * resolution %sx%s@%sHz position 0,0\n\n' \
-        "${GAMESCOPE_WIDTH:-1920}" "${GAMESCOPE_HEIGHT:-1080}" "${GAMESCOPE_REFRESH:-60}"
+    printf 'output * resolution %sx%s position 0,0\n\n' "${GAMESCOPE_WIDTH:-1920}" "${GAMESCOPE_HEIGHT:-1080}"
     cat "$LIB/sway.conf"
     if [ "${XIVSTREAM_SESSION_MODE:-game}" = game ]; then
         printf '\nexec %s\nexec %s\n' "$LIB/ghostty-agent.sh" "$LIB/launcher.sh"
