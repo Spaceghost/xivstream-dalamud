@@ -41,13 +41,50 @@ memory = ""                   # limits.memory, "" = unlimited
 gpu = ""                      # PCI address, "" = the first discrete GPU
 autostart = true              # start at boot once the listen address exists
 
-[incus.cpu_policy]            # optional; both CPU selections enable it
+[incus.cpu_policy]            # optional; both CPU selections enable it (Wolf reads them too)
 busy_cpus = ""                # e.g. "4-7" pins four cores, or "4" allows any four
 idle_cpus = ""                # e.g. "0-7" pins all eight, or "8" allows any eight
 busy_threshold_percent = 25   # non-game share of total machine CPU
 idle_threshold_percent = 10   # must stay below the busy threshold
 busy_after_seconds = 15       # sustained load before restricting the game
 idle_after_seconds = 90       # sustained idle before restoring its CPUs
+
+[wolf]                        # backend = "wolf" (topology = "host"); see docs/backends.md
+image = ""                    # the session image; "" = built from images/session as localhost/xivstream-session:<hash>
+server_image = ""             # Wolf; "" = the digest this release was tested with
+autostart = true              # start Wolf at boot ([Install] in its Quadlet); apply starts it too
+home = "/var/lib/xivstream/home"   # the game's home, mounted at /home/player in the session
+home_device = ""              # "UUID=<btrfs uuid>" or a /dev path; "" = the filesystem of the Incus "default" pool
+home_subvolume = "xivstream-home"  # the home's btrfs subvolume (top level of home_device)
+network = "xivstream"         # the session's Podman bridge (no DNS; bridge interface xivstream0)
+subnet = "10.89.10.0/24"      # its gateway, the first address, carries the forwards
+app_ip = "10.89.10.10"        # the session's fixed address
+legacy_address = ""           # the old Incus game container's address; "" = its eth0 ipv4.address at apply
+allowed_clients = []          # tailnet addresses or ranges that may reach Wolf; [] = anything on tailscale0
+mounts = [                    # extra "host:container[:ro]" mounts; ones whose source is missing are skipped
+  "/home/jack/.local/bin/claude:/usr/local/bin/claude:ro",
+  "/home/jack/.claude.json:/home/player/.claude.json",
+  "/home/jack/.claude:/home/player/.claude",
+  "/home/jack/.local/bin/codex:/usr/local/bin/codex:ro",
+  "/home/jack/.codex:/home/player/.codex",
+]
+memory = "12g"                # the session container's memory limit ("" = none)
+cpus_busy = ""                # the game's CPU list while the host is busy; "" = [incus.cpu_policy] busy_cpus
+cpus_idle = ""                # and while it is idle; "" = [incus.cpu_policy] idle_cpus
+zero_copy = false             # Wolf's DMA-BUF to CUDA path (NVIDIA multi-session crashes: wolf#501, #265)
+codecs = "auto"               # "auto" (HEVC when Wolf and the client can) or "h264" (Wolf offers H.264 only)
+
+[[wolf.forwards]]             # the session's 127.0.0.1:<port> reaches <target> (defaults: the Incus proxy devices)
+name = "almanac-gateway"
+port = 41881
+target = "100.100.110.16:41881"
+# ... bak-agent 7787 -> 100.104.232.33:7777, alienware-agent 7788 -> 100.83.231.2:7777,
+#     fedora-agent 7789 -> 100.100.110.16:7788, voice-whisper 8178 -> 100.83.231.2:8178,
+#     voice-mic 4713 -> 100.83.231.2:4713 (also the session's PulseAudio microphone tunnel)
+
+[wolf.inbound]                # peers reaching legacy_address on these ports reach the session
+ports = [41800, 41881, 7777]
+peers = ["100.83.231.2", "100.104.232.33", "10.61.200.1"]
 
 [selkies]                     # backend = "selkies"
 port = 8080
@@ -119,3 +156,21 @@ Stopping the policy and restoring the static allocation are separate checked
 steps. If Incus rejects the allocation after the service stops, rerun the same
 apply command: it retries the allocation even though the service is already
 disabled. It also applies later changes to `[incus] cpu` while the policy is off.
+
+## The Wolf backend's [wolf] section
+
+The defaults reproduce the Incus game container they replace on the machine this was built
+for: its proxy devices (`forwards`), its tailnet ACL (`inbound`), its memory limit and its
+temporary claude/codex disk devices (`mounts`). Change them for another machine. A list you
+set replaces the default list.
+
+`[wolf]` is only checked when `backend = "wolf"`. With Wolf, `[incus.cpu_policy]` stays valid:
+game-cpu-fence gives the game's Podman scope `cpus_busy` (else `busy_cpus`) and switches to
+`cpus_idle` (else `idle_cpus`) after the host has been idle for `idle_after_seconds`, with the same
+thresholds as the Incus policy. Lists only (`4-7`, `0,2,4,6`): a bare count cannot pin a scope.
+
+`legacy_address`, when empty, is read from Incus at apply time; set it to keep Incus out of the
+picture. The services Wolf's units run (`wolf-preflight`, `wolf-config`) never call incusd.
+
+Every command reads `$XIVSTREAM_CONFIG` when `--config` is not given; the Sunshine fallback
+unit runs `start-container` and `stop-container` with `XIVSTREAM_CONFIG=/etc/xivstream/sunshine.toml`.

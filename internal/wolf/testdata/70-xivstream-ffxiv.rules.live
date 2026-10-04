@@ -1,0 +1,24 @@
+# xivstream: the streaming server in the ffxiv Incus container
+# creates the client's keyboard, mice and pads through uinput/uhid. Their event
+# nodes appear in this host's /dev/input, which the container sees through a
+# bind mount; xivstream input-bridge inside it announces them to its udev.
+# The names are the match: no real device is called this.
+#
+# Give just these nodes to the container (chown, because udev will not take a
+# numeric OWNER without a user record here): 1001000:1000104 is the
+# container's player user and its input group through the container's
+# id map. Every other input device stays unreadable from the container.
+#
+# (Not Incus's unix-hotplug device: in 6.23 it deadlocks incusd when the
+# container stops while a matched device is being removed.)
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="*libvirtualhid*", MODE="0660", RUN+="/usr/bin/chown 1001000:1000104 $devnode"
+
+# PlayStation pad emulation (gamepad = ds5): the pad is a uhid
+# device with Sony's vendor id (a real one is on USB or Bluetooth, never under
+# uhid), and Wine reads PlayStation pads through hidraw. Its event nodes are
+# handed over like the ones above; its hidraw node, which lives in /dev itself,
+# is copied into /dev/xivstream/ffxiv, which the container sees at
+# /dev/hidraw-stream.
+SUBSYSTEM=="input", KERNEL=="event*", DEVPATH=="/devices/virtual/misc/uhid/*:054[Cc]:*", MODE="0660", RUN+="/usr/bin/chown 1001000:1000104 $devnode"
+SUBSYSTEM=="hidraw", ACTION=="add", DEVPATH=="/devices/virtual/misc/uhid/*:054[Cc]:*", RUN+="/bin/sh -c 'mkdir -p /dev/xivstream/ffxiv && rm -f /dev/xivstream/ffxiv/%k && mknod -m 0660 /dev/xivstream/ffxiv/%k c $major $minor && chown 1001000:1000104 /dev/xivstream/ffxiv/%k'"
+SUBSYSTEM=="hidraw", ACTION=="remove", DEVPATH=="/devices/virtual/misc/uhid/*:054[Cc]:*", RUN+="/bin/rm -f /dev/xivstream/ffxiv/%k"

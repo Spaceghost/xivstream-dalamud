@@ -1,0 +1,300 @@
+# Wolf's configuration. xivstream (`xivstream wolf-config`, run before Wolf
+# starts) keeps its app here and leaves the rest as Wolf wrote it; Wolf
+# rewrites the file when a client pairs.
+config_version = 7
+hostname = "fedora-wolf"
+uuid = "9f1c2d3e-aaaa-4bbb-8ccc-0123456789ab"
+
+[gstreamer]
+  [gstreamer.audio]
+    default_audio_params = "queue max-size-buffers=3 leaky=downstream ! audiorate ! audioconvert"
+    default_opus_encoder = "opusenc bitrate={bitrate} bitrate-type=cbr frame-size={packet_duration} bandwidth=fullband audio-type=restricted-lowdelay max-payload-size=1400"
+    default_sink = "queue ! rtpmoonlightpay_audio name=moonlight_pay packet_duration={packet_duration} encrypt={encrypt} aes_key=\"{aes_key}\" aes_iv=\"{aes_iv}\" !\nappsink name=wolf_udp_sink"
+    default_source = "interpipesrc name=interpipesrc_{}_audio listen-to={session_id}_audio is-live=true stream-sync=restart-ts max-bytes=0 max-buffers=3 block=false"
+  [gstreamer.video]
+    default_sink = "queue ! rtpmoonlightpay_video name=moonlight_pay payload_size={payload_size} fec_percentage={fec_percentage} min_required_fec_packets={min_required_fec_packets} !\nappsink sync=false max-buffers=1 drop=true name=wolf_udp_sink\n"
+    default_source = "interpipesrc name=interpipesrc_{}_video listen-to={session_id}_video is-live=true stream-sync=restart-ts max-bytes=0 max-buffers=1 leaky-type=downstream"
+
+    [[gstreamer.video.av1_encoders]]
+      check_elements = ["nvav1enc", "cudaconvertscale", "cudaupload"]
+      encoder_pipeline = "nvav1enc gop-size=-1 bitrate={bitrate} vbv-buffer-size={vbv_buffer_size} rc-mode=cbr zerolatency=true preset=p1 tune=ultra-low-latency multi-pass=two-pass-quarter !\nav1parse !\nvideo/x-av1, stream-format=obu-stream, alignment=frame, profile=main"
+      plugin_name = "nvcodec"
+
+    [[gstreamer.video.av1_encoders]]
+      check_elements = ["vaav1enc", "vapostproc"]
+      encoder_pipeline = "vaav1enc ref-frames=1 bitrate={bitrate} cpb-size={vbv_buffer_size} key-int-max=1024 rate-control=cbr min-qp=20 target-usage=6 !\nav1parse !\nvideo/x-av1, stream-format=obu-stream, alignment=frame, profile=main"
+      plugin_name = "va"
+
+    [[gstreamer.video.av1_encoders]]
+      check_elements = ["vaav1lpenc", "vapostproc"]
+      encoder_pipeline = "vaav1lpenc ref-frames=1 bitrate={bitrate} cpb-size={vbv_buffer_size} key-int-max=1024 rate-control=cbr min-qp=20 target-usage=6 !\nav1parse !\nvideo/x-av1, stream-format=obu-stream, alignment=frame, profile=main"
+      plugin_name = "va"
+
+    [[gstreamer.video.av1_encoders]]
+      check_elements = ["qsvav1enc", "vapostproc"]
+      encoder_pipeline = "qsvav1enc gop-size=0 ref-frames=1 bitrate={bitrate} rate-control=cbr low-latency=1 target-usage=6 !\nav1parse !\nvideo/x-av1, stream-format=obu-stream, alignment=frame, profile=main"
+      plugin_name = "qsv"
+
+    [[gstreamer.video.av1_encoders]]
+      check_elements = ["av1enc"]
+      encoder_pipeline = "av1enc usage-profile=realtime end-usage=vbr target-bitrate={bitrate} !\nav1parse !\nvideo/x-av1, stream-format=obu-stream, alignment=frame, profile=main"
+      plugin_name = "aom"
+      video_params = "videoconvertscale !\nvideorate !\nvideo/x-raw, width={width}, height={height}, framerate={fps}/1, format=I420,\nchroma-site={color_range}, colorimetry={color_space}"
+      video_params_zero_copy = "videoconvertscale !\nvideorate !\nvideo/x-raw, width={width}, height={height}, framerate={fps}/1, format=I420,\nchroma-site={color_range}, colorimetry={color_space}"
+    [gstreamer.video.defaults]
+      [gstreamer.video.defaults.nvcodec]
+        video_params = "cudaupload !\ncudaconvertscale add-borders=true !\nvideo/x-raw(memory:CUDAMemory), width={width}, height={height}, chroma-site={color_range}, format=NV12, colorimetry={color_space}, pixel-aspect-ratio=1/1"
+        video_params_zero_copy = "cudaupload !\ncudaconvertscale add-borders=true !\nvideo/x-raw(memory:CUDAMemory),format=NV12, width={width}, height={height}, pixel-aspect-ratio=1/1\n"
+      [gstreamer.video.defaults.qsv]
+        video_params = "videoconvertscale !\nvideo/x-raw, chroma-site={color_range}, width={width}, height={height}, format=NV12,\ncolorimetry={color_space}, pixel-aspect-ratio=1/1"
+        video_params_zero_copy = "vapostproc add-borders=true !\nvideo/x-raw(memory:VAMemory), format=NV12, width={width}, height={height}, pixel-aspect-ratio=1/1"
+      [gstreamer.video.defaults.va]
+        video_params = "vapostproc add-borders=true !\nvideo/x-raw, chroma-site={color_range}, width={width}, height={height}, format=NV12,\ncolorimetry={color_space}, pixel-aspect-ratio=1/1"
+        video_params_zero_copy = "vapostproc add-borders=true !\nvideo/x-raw(memory:VAMemory), format=NV12, width={width}, height={height}, pixel-aspect-ratio=1/1"
+
+    [[gstreamer.video.h264_encoders]]
+      check_elements = ["nvh264enc", "cudaconvertscale", "cudaupload"]
+      encoder_pipeline = "nvh264enc preset=low-latency-hq zerolatency=true gop-size=0 rc-mode=cbr-ld-hq bitrate={bitrate} vbv-buffer-size={vbv_buffer_size} aud=false !\nh264parse !\nvideo/x-h264, profile=main, stream-format=byte-stream"
+      plugin_name = "nvcodec"
+
+    [[gstreamer.video.h264_encoders]]
+      check_elements = ["vah264enc", "vapostproc"]
+      encoder_pipeline = "vah264enc aud=false b-frames=0 ref-frames=1 num-slices={slices_per_frame} bitrate={bitrate} cpb-size={vbv_buffer_size} min-qp=20 key-int-max=1024 rate-control=cbr target-usage=6 !\nh264parse !\nvideo/x-h264, profile=main, stream-format=byte-stream"
+      plugin_name = "va"
+
+    [[gstreamer.video.h264_encoders]]
+      check_elements = ["vah264lpenc", "vapostproc"]
+      encoder_pipeline = "vah264lpenc aud=false b-frames=0 ref-frames=1 num-slices={slices_per_frame} bitrate={bitrate} cpb-size={vbv_buffer_size} min-qp=20 key-int-max=1024 rate-control=cbr target-usage=6 !\nh264parse !\nvideo/x-h264, profile=main, stream-format=byte-stream"
+      plugin_name = "va"
+
+    [[gstreamer.video.h264_encoders]]
+      check_elements = ["qsvh264enc", "vapostproc"]
+      encoder_pipeline = "qsvh264enc b-frames=0 gop-size=0 idr-interval=1 ref-frames=1 bitrate={bitrate} rate-control=cbr target-usage=6  !\nh264parse !\nvideo/x-h264, profile=main, stream-format=byte-stream"
+      plugin_name = "qsv"
+
+    [[gstreamer.video.h264_encoders]]
+      check_elements = ["x264enc"]
+      encoder_pipeline = "x264enc pass=qual tune=zerolatency speed-preset=superfast b-adapt=false bframes=0 ref=1\nsliced-threads=true threads={slices_per_frame} option-string=\"slices={slices_per_frame}:keyint=infinite:open-gop=0\"\nb-adapt=false bitrate={bitrate} aud=false !\nvideo/x-h264, profile=high, stream-format=byte-stream"
+      plugin_name = "x264"
+
+    [[gstreamer.video.hevc_encoders]]
+      check_elements = ["nvh265enc", "cudaconvertscale", "cudaupload"]
+      encoder_pipeline = "nvh265enc gop-size=-1 bitrate={bitrate} vbv-buffer-size={vbv_buffer_size} aud=false rc-mode=cbr zerolatency=true preset=p1 tune=ultra-low-latency multi-pass=two-pass-quarter !\nh265parse !\nvideo/x-h265, profile=main, stream-format=byte-stream"
+      plugin_name = "nvcodec"
+
+    [[gstreamer.video.hevc_encoders]]
+      check_elements = ["vah265enc", "vapostproc"]
+      encoder_pipeline = "vah265enc aud=false b-frames=0 ref-frames=1 num-slices={slices_per_frame} bitrate={bitrate} cpb-size={vbv_buffer_size} min-qp=20 key-int-max=1024 rate-control=cbr target-usage=6 !\nh265parse !\nvideo/x-h265, profile=main, stream-format=byte-stream"
+      plugin_name = "va"
+
+    [[gstreamer.video.hevc_encoders]]
+      check_elements = ["qsvh265enc", "vapostproc"]
+      encoder_pipeline = "qsvh265enc b-frames=0 gop-size=0 idr-interval=1 ref-frames=1 bitrate={bitrate} rate-control=cbr low-latency=1 target-usage=6 !\nh265parse !\nvideo/x-h265, profile=main, stream-format=byte-stream"
+      plugin_name = "qsv"
+
+    [[gstreamer.video.hevc_encoders]]
+      check_elements = ["vah265lpenc", "vapostproc"]
+      encoder_pipeline = "vah265lpenc aud=false b-frames=0 ref-frames=1 num-slices={slices_per_frame} bitrate={bitrate} cpb-size={vbv_buffer_size} min-qp=20 key-int-max=1024 rate-control=cbr target-usage=6 !\nh265parse !\nvideo/x-h265, profile=main, stream-format=byte-stream"
+      plugin_name = "va"
+
+    [[gstreamer.video.hevc_encoders]]
+      check_elements = ["x265enc"]
+      encoder_pipeline = "x265enc tune=zerolatency speed-preset=superfast bitrate={bitrate}\noption-string=\"info=0:keyint=-1:qp=28:repeat-headers=1:slices={slices_per_frame}:aud=0:annexb=1:log-level=3:open-gop=0:bframes=0:intra-refresh=0\" !\nvideo/x-h265, profile=main, stream-format=byte-stream"
+      plugin_name = "x265"
+      video_params = "videoconvertscale !\nvideorate !\nvideo/x-raw, width={width}, height={height}, framerate={fps}/1, format=I420,\nchroma-site={color_range}, colorimetry={color_space}"
+      video_params_zero_copy = "videoconvertscale !\nvideorate !\nvideo/x-raw, width={width}, height={height}, framerate={fps}/1, format=I420,\nchroma-site={color_range}, colorimetry={color_space}"
+
+[[paired_clients]]
+  app_state_folder = "1111"
+  client_cert = "-----BEGIN CERTIFICATE-----\nAAAA-alienware\n-----END CERTIFICATE-----\n"
+  [paired_clients.settings]
+    controllers_override = ["XBOX"]
+    h_scroll_acceleration = 1.0
+    motion_controller_override = "AUTO"
+    mouse_acceleration = 1.5
+    run_gid = 1000
+    run_uid = 1000
+    v_scroll_acceleration = 1.0
+
+[[paired_clients]]
+  app_state_folder = "2222"
+  client_cert = "-----BEGIN CERTIFICATE-----\nBBBB-ipad\n-----END CERTIFICATE-----\n"
+  [paired_clients.settings]
+    controllers_override = ["PS"]
+    h_scroll_acceleration = 1.0
+    motion_controller_override = "AUTO"
+    mouse_acceleration = 1.0
+    run_gid = 1000
+    run_uid = 1000
+    v_scroll_acceleration = 1.0
+
+[[profiles]]
+  id = "moonlight-profile-id"
+
+  [[profiles.apps]]
+    icon_png_path = "https://raw.githubusercontent.com/games-on-whales/wolf-ui/refs/heads/main/src/Icons/wolf_ui_icon.png"
+    start_virtual_compositor = true
+    title = "Wolf UI"
+    [profiles.apps.runner]
+      base_create_json = "{\n      \"HostConfig\": {\n        \"IpcMode\": \"host\",\n        \"CapAdd\": [\"NET_RAW\", \"MKNOD\", \"NET_ADMIN\", \"SYS_ADMIN\", \"SYS_NICE\"],\n        \"Privileged\": false,\n        \"DeviceCgroupRules\": [\"c 13:* rmw\", \"c 244:* rmw\"]\n      }\n    }"
+      devices = []
+      env = ["GOW_REQUIRED_DEVICES=/dev/input/event* /dev/dri/* /dev/nvidia*", "WOLF_SOCKET_PATH=/var/run/wolf/wolf.sock", "WOLF_UI_AUTOUPDATE=False", "LOGLEVEL=INFO"]
+      image = "ghcr.io/games-on-whales/wolf-ui:main"
+      mounts = ["/var/run/wolf/wolf.sock:/var/run/wolf/wolf.sock"]
+      name = "Wolf-UI"
+      ports = []
+      type = "docker"
+
+  [[profiles.apps]]
+    start_audio_server = true
+    start_virtual_compositor = true
+    title = "Final Fantasy XIV"
+    [profiles.apps.runner]
+      base_create_json = "{\"HostConfig\":{\"CapAdd\":[\"NET_RAW\",\"MKNOD\",\"NET_ADMIN\"],\"DeviceCgroupRules\":[\"c 13:* rmw\"],\"IpcMode\":\"host\",\"Memory\":12884901888,\"NetworkMode\":\"xivstream\",\"Privileged\":false,\"SecurityOpt\":[\"label=disable\"]},\"NetworkingConfig\":{\"EndpointsConfig\":{\"xivstream\":{\"IPAMConfig\":{\"IPv4Address\":\"10.89.10.10\"}}}}}"
+      devices = []
+      env = ["DXVK_FRAME_RATE=60", "XIVSTREAM_GATEWAY=10.89.10.1", "XIVSTREAM_FORWARDS=41881 7787 7788 7789 8178 4713", "XIVSTREAM_HOME_UNIT=var-lib-xivstream-home.mount", "XIVSTREAM_MIC_PORT=4713"]
+      image = "localhost/xivstream-session:0123456789abcdef"
+      mounts = ["/var/lib/xivstream/home:/home/player:rw", "/home/jack/.local/bin/claude:/usr/local/bin/claude:ro", "/home/jack/.claude.json:/home/player/.claude.json:rw", "/home/jack/.claude:/home/player/.claude:rw", "/home/jack/.local/bin/codex:/usr/local/bin/codex:ro", "/home/jack/.codex:/home/player/.codex:rw"]
+      name = "WolfFFXIV"
+      ports = []
+      type = "docker"
+
+  [[profiles.apps]]
+    icon_png_path = "https://raw.githubusercontent.com/games-on-whales/wolf/refs/heads/stable/docs/images/test_ball_icon.png"
+    start_audio_server = false
+    start_virtual_compositor = false
+    title = "Test ball"
+    [profiles.apps.audio]
+      source = "audiotestsrc wave=ticks is-live=true"
+    [profiles.apps.runner]
+      run_cmd = "sh -c \"while :; do echo 'running...'; sleep 10; done\""
+      type = "process"
+    [profiles.apps.video]
+      source = "videotestsrc pattern=ball flip=true is-live=true !\nvideo/x-raw, framerate={fps}/1\n"
+
+[[profiles]]
+  id = "user"
+  name = "User"
+
+  [[profiles.apps]]
+    icon_png_path = "https://games-on-whales.github.io/wildlife/apps/firefox/assets/icon.png"
+    start_virtual_compositor = true
+    title = "Firefox"
+    [profiles.apps.runner]
+      base_create_json = "{\n  \"HostConfig\": {\n    \"IpcMode\": \"host\",\n    \"Privileged\": false,\n    \"CapAdd\": [\"NET_RAW\", \"MKNOD\", \"NET_ADMIN\"],\n    \"DeviceCgroupRules\": [\"c 13:* rmw\", \"c 244:* rmw\"]\n  }\n}\n"
+      devices = []
+      env = ["RUN_SWAY=1", "MOZ_ENABLE_WAYLAND=1", "GOW_REQUIRED_DEVICES=/dev/input/* /dev/dri/* /dev/nvidia*"]
+      image = "ghcr.io/games-on-whales/firefox:edge"
+      mounts = []
+      name = "WolfFirefox"
+      ports = []
+      type = "docker"
+
+  [[profiles.apps]]
+    icon_png_path = "https://games-on-whales.github.io/wildlife/apps/retroarch/assets/icon.png"
+    start_virtual_compositor = true
+    title = "RetroArch"
+    [profiles.apps.runner]
+      base_create_json = "{\n  \"HostConfig\": {\n    \"IpcMode\": \"host\",\n    \"CapAdd\": [\"NET_RAW\", \"MKNOD\", \"NET_ADMIN\", \"SYS_ADMIN\", \"SYS_NICE\"],\n    \"Privileged\": false,\n    \"DeviceCgroupRules\": [\"c 13:* rmw\", \"c 244:* rmw\"]\n  }\n}\n"
+      devices = []
+      env = ["RUN_SWAY=true", "GOW_REQUIRED_DEVICES=/dev/input/* /dev/dri/* /dev/nvidia*"]
+      image = "ghcr.io/games-on-whales/retroarch:edge"
+      mounts = []
+      name = "WolfRetroarch"
+      ports = []
+      type = "docker"
+
+  [[profiles.apps]]
+    icon_png_path = "https://games-on-whales.github.io/wildlife/apps/steam/assets/icon.png"
+    start_virtual_compositor = true
+    title = "Steam"
+    [profiles.apps.runner]
+      base_create_json = "{\n  \"HostConfig\": {\n    \"IpcMode\": \"host\",\n    \"CapAdd\": [\"SYS_ADMIN\", \"SYS_NICE\", \"SYS_PTRACE\", \"NET_RAW\", \"MKNOD\", \"NET_ADMIN\"],\n    \"SecurityOpt\": [\"seccomp=unconfined\", \"apparmor=unconfined\"],\n    \"Ulimits\": [{\"Name\":\"nofile\", \"Hard\":10240, \"Soft\":10240}],\n    \"Privileged\": false,\n    \"DeviceCgroupRules\": [\"c 13:* rmw\", \"c 244:* rmw\"]\n  }\n}\n"
+      devices = []
+      env = ["PROTON_LOG=1", "RUN_SWAY=true", "GOW_REQUIRED_DEVICES=/dev/input/* /dev/dri/* /dev/nvidia*"]
+      image = "ghcr.io/games-on-whales/steam:edge"
+      mounts = []
+      name = "WolfSteam"
+      ports = []
+      type = "docker"
+
+  [[profiles.apps]]
+    icon_png_path = "https://games-on-whales.github.io/wildlife/apps/pegasus/assets/icon.png"
+    start_virtual_compositor = true
+    title = "Pegasus"
+    [profiles.apps.runner]
+      base_create_json = "{\n  \"HostConfig\": {\n    \"IpcMode\": \"host\",\n    \"CapAdd\": [\"NET_RAW\", \"MKNOD\", \"NET_ADMIN\", \"SYS_ADMIN\", \"SYS_NICE\"],\n    \"Privileged\": false,\n    \"DeviceCgroupRules\": [\"c 13:* rmw\", \"c 244:* rmw\"]\n  }\n}\n"
+      devices = []
+      env = ["RUN_SWAY=1", "GOW_REQUIRED_DEVICES=/dev/input/event* /dev/dri/* /dev/nvidia*"]
+      image = "ghcr.io/games-on-whales/pegasus:edge"
+      mounts = []
+      name = "WolfPegasus"
+      ports = []
+      type = "docker"
+
+  [[profiles.apps]]
+    icon_png_path = "https://games-on-whales.github.io/wildlife/apps/lutris/assets/icon.png"
+    start_virtual_compositor = true
+    title = "Lutris"
+    [profiles.apps.runner]
+      base_create_json = "{\n  \"HostConfig\": {\n    \"IpcMode\": \"host\",\n    \"CapAdd\": [\"SYS_ADMIN\", \"SYS_NICE\", \"SYS_PTRACE\", \"NET_RAW\", \"MKNOD\", \"NET_ADMIN\"],\n    \"SecurityOpt\": [\"seccomp=unconfined\", \"apparmor=unconfined\"],\n    \"Ulimits\": [{\"Name\":\"nofile\", \"Hard\":524288, \"Soft\":524288}],\n    \"Privileged\": false,\n    \"DeviceCgroupRules\": [\"c 13:* rmw\", \"c 244:* rmw\"]\n  }\n}\n"
+      devices = []
+      env = ["RUN_SWAY=1", "GOW_REQUIRED_DEVICES=/dev/input/event* /dev/dri/* /dev/nvidia* /var/lutris/"]
+      image = "ghcr.io/games-on-whales/lutris:edge"
+      mounts = ["lutris:/var/lutris/:rw"]
+      name = "WolfLutris"
+      ports = []
+      type = "docker"
+
+  [[profiles.apps]]
+    icon_png_path = "https://games-on-whales.github.io/wildlife/apps/prismlauncher/assets/icon.png"
+    start_virtual_compositor = true
+    title = "Prismlauncher"
+    [profiles.apps.runner]
+      base_create_json = "{\n  \"HostConfig\": {\n    \"IpcMode\": \"host\",\n    \"CapAdd\": [\"NET_RAW\", \"MKNOD\", \"NET_ADMIN\", \"SYS_ADMIN\", \"SYS_NICE\"],\n    \"Privileged\": false,\n    \"DeviceCgroupRules\": [\"c 13:* rmw\", \"c 244:* rmw\"]\n  }\n}\n"
+      devices = []
+      env = ["RUN_SWAY=1", "GOW_REQUIRED_DEVICES=/dev/input/event* /dev/dri/* /dev/nvidia* /var/lutris/"]
+      image = "ghcr.io/games-on-whales/prismlauncher:edge"
+      mounts = []
+      name = "Prismlauncher"
+      ports = []
+      type = "docker"
+
+  [[profiles.apps]]
+    icon_png_path = "https://games-on-whales.github.io/wildlife/apps/xfce/assets/icon.png"
+    title = "Desktop (xfce)"
+    [profiles.apps.runner]
+      base_create_json = "{\n  \"HostConfig\": {\n    \"IpcMode\": \"host\",\n    \"Privileged\": false,\n    \"CapAdd\": [\"SYS_ADMIN\", \"SYS_NICE\", \"SYS_PTRACE\", \"NET_RAW\", \"MKNOD\", \"NET_ADMIN\"],\n    \"SecurityOpt\": [\"seccomp=unconfined\", \"apparmor=unconfined\"],\n    \"DeviceCgroupRules\": [\"c 13:* rmw\", \"c 244:* rmw\"]\n  }\n}\n"
+      devices = []
+      env = ["GOW_REQUIRED_DEVICES=/dev/input/* /dev/dri/* /dev/nvidia*"]
+      image = "ghcr.io/games-on-whales/xfce:edge"
+      mounts = []
+      name = "WolfXFCE"
+      ports = []
+      type = "docker"
+
+  [[profiles.apps]]
+    icon_png_path = "https://games-on-whales.github.io/wildlife/apps/es-de/assets/icon.png"
+    title = "EmulationStation"
+    [profiles.apps.runner]
+      base_create_json = "{\n  \"HostConfig\": {\n    \"IpcMode\": \"host\",\n    \"Privileged\": false,\n    \"CapAdd\": [\"NET_RAW\", \"MKNOD\", \"NET_ADMIN\"],\n    \"DeviceCgroupRules\": [\"c 13:* rmw\", \"c 244:* rmw\"]\n  }\n}\n"
+      devices = []
+      env = ["RUN_SWAY=1", "MOZ_ENABLE_WAYLAND=1", "GOW_REQUIRED_DEVICES=/dev/input/* /dev/dri/* /dev/nvidia*"]
+      image = "ghcr.io/games-on-whales/es-de:edge"
+      mounts = []
+      name = "WolfES-DE"
+      ports = []
+      type = "docker"
+
+  [[profiles.apps]]
+    icon_png_path = "https://games-on-whales.github.io/wildlife/apps/kodi/assets/icon.png"
+    title = "Kodi"
+    [profiles.apps.runner]
+      base_create_json = "{\n  \"HostConfig\": {\n    \"IpcMode\": \"host\",\n    \"Privileged\": false,\n    \"CapAdd\": [\"NET_RAW\", \"MKNOD\", \"NET_ADMIN\"],\n    \"DeviceCgroupRules\": [\"c 13:* rmw\", \"c 244:* rmw\"]\n  }\n}\n"
+      devices = []
+      env = ["RUN_SWAY=true", "GOW_REQUIRED_DEVICES=/dev/input/* /dev/dri/* /dev/nvidia*"]
+      image = "ghcr.io/games-on-whales/kodi:edge"
+      mounts = []
+      name = "WolfKodi"
+      ports = []
+      type = "docker"

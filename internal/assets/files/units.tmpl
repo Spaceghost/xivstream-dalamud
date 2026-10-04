@@ -121,6 +121,10 @@ WantedBy=multi-user.target
 #
 # (Not Incus's unix-hotplug device: in 6.23 it deadlocks incusd when the
 # container stops while a matched device is being removed.)
+# Wolf's virtual devices ("Wolf ... (virtual) ...") are Wolf's, never this container's.
+SUBSYSTEMS=="input", ATTRS{name}=="Wolf *virtual*", GOTO="xivstream_not_wolf_end"
+KERNEL=="hidraw*", ATTRS{uevent}=="*HID_NAME=Wolf *virtual*", GOTO="xivstream_not_wolf_end"
+
 {{range .InputMarks}}SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="*{{.}}*", MODE="0660", RUN+="/usr/bin/chown {{$.HostUID}}:{{$.HostGID}} $devnode"
 {{end}}{{if .HidrawDir}}
 # PlayStation pad emulation (gamepad = {{.Stream.Gamepad}}): the pad is a uhid
@@ -132,7 +136,9 @@ WantedBy=multi-user.target
 SUBSYSTEM=="input", KERNEL=="event*", DEVPATH=="/devices/virtual/misc/uhid/*:054[Cc]:*", MODE="0660", RUN+="/usr/bin/chown {{.HostUID}}:{{.HostGID}} $devnode"
 SUBSYSTEM=="hidraw", ACTION=="add", DEVPATH=="/devices/virtual/misc/uhid/*:054[Cc]:*", RUN+="/bin/sh -c 'mkdir -p {{.HidrawDir}} && rm -f {{.HidrawDir}}/%k && mknod -m 0660 {{.HidrawDir}}/%k c $major $minor && chown {{.HostUID}}:{{.HostGID}} {{.HidrawDir}}/%k'"
 SUBSYSTEM=="hidraw", ACTION=="remove", DEVPATH=="/devices/virtual/misc/uhid/*:054[Cc]:*", RUN+="/bin/rm -f {{.HidrawDir}}/%k"
-{{end}}{{end}}
+{{end}}
+LABEL="xivstream_not_wolf_end"
+{{end}}
 {{define "wireplumber.conf"}}# xivstream: sound only ever leaves through the stream. The streaming server
 # makes its own virtual sinks and captures them; nothing may create a sink that
 # plays aloud, even if sound hardware or Bluetooth appeared later.

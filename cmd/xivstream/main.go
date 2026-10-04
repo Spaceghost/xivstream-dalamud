@@ -10,7 +10,8 @@
 //
 // Services (started by the units apply installs):
 //
-//	gpu-share, input-bridge, prepare-gpu, render-node, start-container
+//	gpu-share, input-bridge, prepare-gpu, render-node, start-container,
+//	stop-container, wolf-config, wolf-preflight, wolf-cleanup, nvidia-driver-vol
 package main
 
 import (
@@ -81,6 +82,16 @@ func main() {
 		err = runRenderNode()
 	case "start-container":
 		err = runStartContainer(args)
+	case "stop-container":
+		err = runStopContainer(args)
+	case "wolf-config":
+		err = runWolfConfig(args)
+	case "wolf-preflight":
+		err = runWolfPreflight(args)
+	case "wolf-cleanup":
+		err = runWolfCleanup(args)
+	case "nvidia-driver-vol":
+		err = runDriverVolume(args)
 	case "version", "--version", "-V":
 		fmt.Println("xivstream", version)
 	case "help", "-h", "--help":
@@ -107,6 +118,7 @@ func usage() {
   xivstream cpu-config --list        show CPU IDs before choosing cores
   xivstream cpu-config --busy 4-7 --idle 0-7   save busy/idle CPU selections
   xivstream pair PIN [NAME]         pair a Moonlight client showing PIN
+      --client IP                      Wolf: which waiting client, when several are
   xivstream version
 
   --config PATH   use this config (default `+config.Path()+`)
@@ -118,6 +130,13 @@ Services (run by the units apply installs):
   prepare-gpu          fix the passed-through GPU's manifests and nodes
   render-node          print the streaming GPU's render node
   start-container      start the Incus container once its stream address exists
+  stop-container       stop the Incus container (the Sunshine fallback's stop)
+  wolf-config [--dry-run]  put xivstream's app into Wolf's config.toml
+  wolf-preflight       wolf.service's start check (Incus game stopped, home mounted)
+  wolf-cleanup         remove Wolf's leftover session containers
+  nvidia-driver-vol    rebuild Wolf's NVIDIA driver volume if the driver changed
+
+Every command reads $XIVSTREAM_CONFIG when --config is not given.
 `)
 }
 
@@ -351,9 +370,10 @@ func runDoctor(args []string) error {
 func runPair(args []string) error {
 	fs := flag.NewFlagSet("pair", flag.ExitOnError)
 	path := configFlag(fs)
+	client := fs.String("client", "", "Wolf: the address of the client to pair, when several are waiting")
 	_ = fs.Parse(args)
 	if fs.NArg() < 1 {
-		return errors.New("usage: xivstream pair PIN [NAME]")
+		return errors.New("usage: xivstream pair [--client IP] PIN [NAME]")
 	}
 	c, err := load(*path)
 	if err != nil {
@@ -363,8 +383,11 @@ func runPair(args []string) error {
 	if fs.NArg() > 1 {
 		name = fs.Arg(1)
 	}
+	if c.Backend == config.BackendWolf {
+		return pairWolf(c, fs.Arg(0), *client)
+	}
 	if c.Backend != config.BackendSunshine {
-		return fmt.Errorf("pair supports Sunshine; for %s use its web page", c.Backend)
+		return fmt.Errorf("pair supports Sunshine and Wolf; for %s use its web page", c.Backend)
 	}
 	pw, err := os.ReadFile(steps.SecretPath("sunshine-web-password"))
 	if c.Stream.WebPassword != "" {

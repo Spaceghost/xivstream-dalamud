@@ -12,6 +12,7 @@ import (
 	"github.com/Spaceghost/xivstream-dalamud/internal/config"
 	"github.com/Spaceghost/xivstream-dalamud/internal/plan"
 	"github.com/Spaceghost/xivstream-dalamud/internal/sys"
+	"github.com/Spaceghost/xivstream-dalamud/internal/wolf"
 )
 
 // Port is one port a backend listens on.
@@ -26,7 +27,13 @@ func Ports(c config.Config) []Port {
 	switch c.Backend {
 	case config.BackendSelkies:
 		return []Port{{"web", "tcp", c.Selkies.Port}}
-	default: // Sunshine and Wolf use Moonlight's layout around the base port
+	case config.BackendWolf: // Moonlight's, but with Wolf's own video and audio ports
+		var ports []Port
+		for _, p := range wolf.Ports(c.Stream.PortBase) {
+			ports = append(ports, Port{p.Name, p.Proto, p.Num})
+		}
+		return ports
+	default: // Sunshine: Moonlight's layout around the base port
 		b := c.Stream.PortBase
 		return []Port{
 			{"https", "tcp", b - 5}, {"http", "tcp", b}, {"webui", "tcp", b + 1}, {"rtsp", "tcp", b + 21},

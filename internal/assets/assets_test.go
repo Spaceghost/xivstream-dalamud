@@ -55,8 +55,11 @@ func TestStreamScriptPerBackend(t *testing.T) {
 	if !strings.Contains(rule, `ATTRS{name}=="*libvirtualhid*"`) || !strings.Contains(rule, "chown 1001000:1000104 $devnode") {
 		t.Errorf("udev rule:\n%s", rule)
 	}
-	if strings.Contains(rule, "hidraw") {
+	if strings.Contains(rule, `SUBSYSTEM=="hidraw"`) {
 		t.Error("an Xbox pad needs no hidraw rule")
+	}
+	if !strings.Contains(rule, `ATTRS{name}=="Wolf *virtual*", GOTO="xivstream_not_wolf_end"`) || !strings.HasSuffix(rule, "LABEL=\"xivstream_not_wolf_end\"\n") {
+		t.Errorf("the rule skips Wolf's devices:\n%s", rule)
 	}
 	ds5 := string(MustRender("udev.rules", view{Config: c, HostUID: 1001000, HostGID: 1000104, InputMarks: []string{"libvirtualhid"}, HidrawDir: "/dev/xivstream/ffxiv"}))
 	for _, want := range []string{`SUBSYSTEM=="hidraw", ACTION=="add", DEVPATH=="/devices/virtual/misc/uhid/*:054[Cc]:*"`,

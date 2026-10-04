@@ -35,9 +35,11 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/build-push-action@v6
         with:
-          context: images/xivlauncher
-          file: images/xivlauncher/Containerfile
+          # The Wolf session image without an Incus guest's files (XIVLauncher.Core
+          # is downloaded). `xivstream apply` builds its own locally by default.
+          context: images/session
+          file: images/session/Containerfile
           push: true
           tags: |
-            ghcr.io/spaceghost/xivstream-xivlauncher:latest
-            ghcr.io/spaceghost/xivstream-xivlauncher:${{ github.ref_name }}
+            ghcr.io/spaceghost/xivstream-session:latest
+            ghcr.io/spaceghost/xivstream-session:${{ github.ref_name }}

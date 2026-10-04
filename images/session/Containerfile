@@ -1,0 +1,65 @@
+# xivstream's Wolf session: the game, its launcher and the in-game terminal's
+# tools, started by Wolf once per Moonlight client (`xivstream apply` builds it
+# as localhost/xivstream-session:<hash of these files>).
+#
+# Fedora 43, like the Incus game container it replaces, and deliberately not
+# games-on-whales' base-app: GoW's cont-init 10-setup_user.sh runs
+# `userdel -r` on whatever user already has PUID at every container start, and
+# here that user's home is the one shared, bind-mounted game install. This
+# image bakes the user in and its entrypoint never creates or deletes users or
+# homes.
+#
+# The build context's extras/ is what `xivstream apply` exported from the
+# existing Incus guest (if there is one): /opt/xivlauncher, the ghostty-agent
+# package's files, /usr/local/bin/ghostty-voice and whisper-cli. Without a
+# guest it is empty and XIVLauncher.Core is downloaded at XIVLAUNCHER_VERSION.
+FROM registry.fedoraproject.org/fedora:43
+
+ARG XIVLAUNCHER_VERSION=1.4.0
+
+# The Incus guest's user-installed packages, less the streaming server and
+# build tools, plus the libraries ghostty-agent and the launcher load.
+# pipewire-utils is left out on purpose: there is no PipeWire here (Wolf's
+# PulseAudio is the sound server), and ghostty-voice prefers pw-record when it
+# exists, which would then fail; parecord (pulseaudio-utils) records instead.
+RUN dnf -y install --setopt=install_weak_deps=False \
+      sway swaybg xorg-x11-server-Xwayland \
+      gnome-keyring libsecret dbus-daemon \
+      pulseaudio-utils \
+      wine-core wine-common \
+      whisper-cpp wtype wl-clipboard xclip socat \
+      util-linux procps-ng bash coreutils findutils gawk sed grep which \
+      vulkan-loader mesa-vulkan-drivers mesa-dri-drivers mesa-libgbm mesa-libEGL \
+      libglvnd-egl libglvnd-glx libglvnd-gles egl-wayland egl-gbm \
+      SDL3 sdl2-compat libicu \
+      libxkbcommon libwayland-client libwayland-server pixman libdrm lcms2 \
+      libseat libliftoff libinput libxcb xcb-util-errors xcb-util-renderutil xcb-util-wm \
+      lua-libs libwacom mtdev libevdev libgudev glib2 pcre2 expat libcap libffi systemd-libs \
+      libgomp libstdc++ \
+      ca-certificates curl tar gzip xz zstd bzip2 git tmux openssh-clients \
+      iproute iputils hostname file less vim-minimal glibc-langpack-en tzdata \
+ && dnf clean all
+
+# The player: uid/gid 1000, the owner of the shared home. -M: the home is never
+# created here; /home/player is the host's subvolume, bind-mounted by Wolf.
+RUN groupadd -g 1000 player \
+ && useradd -u 1000 -g 1000 -M -d /home/player -s /bin/bash player
+
+# What the Incus guest had (possibly nothing but the placeholder; see above).
+COPY extras/ /usr/local/share/xivstream-extras/
+RUN cd /usr/local/share/xivstream-extras && rm -f .gitkeep && cp -a . / \
+ && cd / && rm -rf /usr/local/share/xivstream-extras
+
+RUN if [ ! -x /opt/xivlauncher/XIVLauncher.Core ]; then \
+      mkdir -p /opt/xivlauncher \
+      && curl -fsSL "https://github.com/goatcorp/XIVLauncher.Core/releases/download/${XIVLAUNCHER_VERSION}/XIVLauncher.Core.tar.gz" \
+         | tar -xz -C /opt/xivlauncher; \
+    fi
+
+# Wolf mounts the NVIDIA driver volume at /usr/nvidia (as GoW's images expect).
+COPY nvidia.conf /etc/ld.so.conf.d/nvidia.conf
+COPY entrypoint.sh session.sh launcher.sh ghostty-agent.sh sway.conf /usr/local/lib/xivstream/session/
+RUN chmod 755 /usr/local/lib/xivstream/session/*.sh
+
+ENV LANG=C.UTF-8
+ENTRYPOINT ["/usr/local/lib/xivstream/session/entrypoint.sh"]
