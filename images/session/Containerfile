@@ -17,11 +17,18 @@ FROM registry.fedoraproject.org/fedora:43
 
 ARG XIVLAUNCHER_VERSION=1.4.0
 
-# The Incus guest's user-installed packages, less the streaming server and
-# build tools, plus the libraries ghostty-agent and the launcher load.
+# packages.txt is the full package set of the Incus guest this replaces (less
+# the streaming server, kernel, package manager and build tools), so the managed
+# Wine, DXVK and NVIDIA's userspace find every library they found there (NVIDIA's
+# Vulkan ICD, for one, needs libXext). The explicit list below adds what the
+# Wolf session needs on top; --skip-unavailable keeps a guest package from a
+# repository this image lacks from failing the build.
 # pipewire-utils is left out on purpose: there is no PipeWire here (Wolf's
 # PulseAudio is the sound server), and ghostty-voice prefers pw-record when it
 # exists, which would then fail; parecord (pulseaudio-utils) records instead.
+COPY packages.txt /tmp/packages.txt
+RUN dnf -y install --setopt=install_weak_deps=False --skip-unavailable $(cat /tmp/packages.txt) \
+ && rm /tmp/packages.txt && dnf clean all
 RUN dnf -y install --setopt=install_weak_deps=False \
       sway swaybg xorg-x11-server-Xwayland \
       gnome-keyring libsecret dbus-daemon \

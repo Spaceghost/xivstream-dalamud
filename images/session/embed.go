@@ -11,7 +11,7 @@ import (
 	"sort"
 )
 
-//go:embed Containerfile nvidia.conf entrypoint.sh session.sh launcher.sh ghostty-agent.sh sway.conf
+//go:embed Containerfile packages.txt nvidia.conf entrypoint.sh session.sh launcher.sh ghostty-agent.sh sway.conf
 var Files embed.FS
 
 // XIVLauncherVersion is the XIVLauncher.Core release downloaded when no Incus
