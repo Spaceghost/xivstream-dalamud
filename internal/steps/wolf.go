@@ -24,7 +24,8 @@ import (
 const LiveConfig = "/etc/xivstream/config.toml"
 
 // long runs a command that may take a while (image builds, downloads).
-func long(argv ...string) (string, error) { return sys.OutputTimeout(time.Hour, argv...) }
+// Image builds on a busy spinning disk have taken over an hour (785 packages).
+func long(argv ...string) (string, error) { return sys.OutputTimeout(6*time.Hour, argv...) }
 
 // FallbackConfig returns the Sunshine config the fallback runs from: the kept
 // copy, else the live config if it still is the Incus/Sunshine one (apply
