@@ -3,6 +3,7 @@ package steps
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path"
 	"runtime"
 	"strings"
@@ -40,7 +41,13 @@ func (b *builder) modSteps(t plan.Target, dir, owner string) []plan.Step {
 		}
 		return []plan.Step{step(t, "Install mods", "", nil, nil, func() error { return err })}
 	}
+	return b.modStepsResolved(t, dir, owner, chosen)
+}
 
+// Kept separate from repository I/O so selected owner-boundary regressions
+// exercise the real plan without network calls.
+func (b *builder) modStepsResolved(t plan.Target, dir, owner string, chosen []mods.Plugin) []plan.Step {
+	c := b.c
 	notRunning := func() error {
 		if _, local := t.(plan.Local); local {
 			if gpushare.GameRunning(c.Game.Process, "") {
@@ -48,12 +55,28 @@ func (b *builder) modSteps(t plan.Target, dir, owner string) []plan.Step {
 			}
 			return nil
 		}
-		if out, _ := t.Run("sh", "-c", `pgrep -f 'ffxiv_dx11\.exe' || true`); strings.TrimSpace(out) != "" {
+		probe := `pgrep -f 'ffxiv_dx11\.exe' || true`
+		if b.ghostty != nil {
+			probe = `pgrep -f 'ffxiv_dx11\.exe'; xivstream_probe_status=$?; test "$xivstream_probe_status" -eq 1`
+		}
+		out, err := t.Run("sh", "-c", probe)
+		if strings.TrimSpace(out) != "" {
 			return errGameRunning
+		}
+		if err != nil && b.ghostty != nil {
+			return errors.New("cannot establish that the game is stopped before Ghostty mod/config writes")
 		}
 		return nil
 	}
 	var s []plan.Step
+	var ownerFiles *ghosttyOwnerTarget
+	if b.ghostty != nil {
+		ownerFiles = ghosttyOwnerFiles(t, b.c.Session.User, "/home/"+b.c.Session.User, "/usr/local/bin/xivstream")
+		if dir != path.Join(ownerFiles.home, ".xlcore") {
+			return []plan.Step{step(t, "Validate Ghostty mod owner path", "", nil, nil, func() error { return errors.New("Ghostty mod directory does not match the session account") })}
+		}
+		s = append(s, step(t, "Validate Ghostty mod owner isolation", "The helper is installed and the session user exists before user-owned mod files are inspected.", []string{"validate trusted helper and explicit session owner"}, func() (bool, error) { err := ownerFiles.probe(); return err == nil, err }, ownerFiles.probe))
+	}
 	var testing []string
 	for _, p := range chosen {
 		version, url, isTesting := p.Pick(c.Mods.Testing)
@@ -61,6 +84,10 @@ func (b *builder) modSteps(t plan.Target, dir, owner string) []plan.Step {
 			testing = append(testing, p.InternalName)
 		}
 		dest := path.Join(dir, "installedPlugins", p.InternalName, version)
+		if ownerFiles != nil && p.InternalName == "GhosttyDalamud" {
+			s = append(s, ghosttyModStep(t, ownerFiles, p, version, url, isTesting, notRunning))
+			continue
+		}
 		s = append(s, step(t, fmt.Sprintf("Install the %s mod %s", p.InternalName, version), p.Punchline,
 			[]string{"download " + url, "unpack into " + dest},
 			exists(t, path.Join(dest, p.InternalName+".dll")),
@@ -80,10 +107,31 @@ func (b *builder) modSteps(t plan.Target, dir, owner string) []plan.Step {
 			}))
 	}
 	cfgPath := path.Join(dir, "dalamudConfig.json")
+	var configFiles plan.Target = t
+	if ownerFiles != nil {
+		configFiles = ownerFiles
+	}
+	readConfig := func() ([]byte, error) {
+		if ownerFiles != nil {
+			m, err := ownerFiles.metadata(cfgPath)
+			if err != nil {
+				return nil, err
+			}
+			if !m.Exists {
+				return nil, nil
+			}
+			return ownerFiles.ReadFile(cfgPath)
+		}
+		old, _ := t.ReadFile(cfgPath)
+		return old, nil
+	}
 	s = append(s, step(t, "Add the mod repositories to Dalamud", strings.Join(c.Mods.Repos, ", "),
 		[]string{"edit " + cfgPath + " (ThirdRepoList" + map[bool]string{true: ", testing opt-ins", false: ""}[len(testing) > 0] + ")"},
 		func() (bool, error) {
-			old, _ := t.ReadFile(cfgPath)
+			old, readErr := readConfig()
+			if readErr != nil {
+				return false, readErr
+			}
 			want, err := mods.ConfigureDalamud(old, c.Mods.Repos, testing)
 			return err == nil && len(old) > 0 && strings.TrimSpace(string(old)) == strings.TrimSpace(string(want)), nil
 		},
@@ -91,12 +139,19 @@ func (b *builder) modSteps(t plan.Target, dir, owner string) []plan.Step {
 			if err := notRunning(); err != nil {
 				return err
 			}
-			old, _ := t.ReadFile(cfgPath)
+			old, readErr := readConfig()
+			if readErr != nil {
+				return readErr
+			}
 			want, err := mods.ConfigureDalamud(old, c.Mods.Repos, testing)
 			if err != nil {
 				return err
 			}
-			return t.WriteFile(cfgPath, want, 0o644, owner)
+			mode := os.FileMode(0644)
+			if ownerFiles != nil {
+				mode = 0600
+			}
+			return configFiles.WriteFile(cfgPath, want, mode, owner)
 		}))
 	if c.Mods.Companions {
 		s = append(s, b.companions(t, chosen, owner)...)
@@ -110,6 +165,10 @@ func (b *builder) companions(t plan.Target, chosen []mods.Plugin, owner string) 
 	for _, p := range chosen {
 		switch p.InternalName {
 		case "GhosttyDalamud":
+			if b.ghostty != nil {
+				s = append(s, b.ghosttySteps(t, owner)...)
+				continue
+			}
 			if targetOS(t) != "linux" {
 				continue // Windows: the plugin runs its shells in-process when no agent answers
 			}

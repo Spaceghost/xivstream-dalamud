@@ -98,10 +98,24 @@ selection and expands only after a fresh idle window. CPU use from the entire ga
 Sunshine, is subtracted before evaluating host load. These are CPU restrictions, not memory/GPU limits;
 other processes can still use the selected CPUs. The service does not create exclusive core reservations.
 
-Read `/run/xivstream-cpu-policy/status` for the mode, measurement and selected CPUs. To disable the policy
+On standard local Incus cgroup-v2 layouts, each sample reads the kernel's
+`lxc.payload.<container>/cpu.stat` counter (including descendants), avoiding a full
+daemon state query every five seconds. Other layouts retain a four-second-bounded
+Incus fallback. Missing, stale or reset measurements immediately request the busy
+selection and restart the idle window; they never count as idle time.
+
+Read `/run/xivstream-cpu-policy/status` for the mode, measurement and selected CPUs.
+It includes `updated_at`, `sample_source`, and `sample_error`; `limits_cpu` is the
+last confirmed policy setting, not a fresh daemon query. A failed limit change is
+reported and retried without restarting the container. To disable the policy
 and restore the static `[incus] cpu` setting on systemd:
 
 ```sh
 sudo xivstream cpu-config --disable
 sudo xivstream apply --cpu-policy-only --yes
 ```
+
+Stopping the policy and restoring the static allocation are separate checked
+steps. If Incus rejects the allocation after the service stops, rerun the same
+apply command: it retries the allocation even though the service is already
+disabled. It also applies later changes to `[incus] cpu` while the policy is off.

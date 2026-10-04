@@ -30,6 +30,7 @@ import (
 	"github.com/Spaceghost/xivstream-dalamud/internal/gpuprep"
 	"github.com/Spaceghost/xivstream-dalamud/internal/gpushare"
 	"github.com/Spaceghost/xivstream-dalamud/internal/inputbridge"
+	"github.com/Spaceghost/xivstream-dalamud/internal/ownerfile"
 	"github.com/Spaceghost/xivstream-dalamud/internal/plan"
 	"github.com/Spaceghost/xivstream-dalamud/internal/steps"
 	"github.com/Spaceghost/xivstream-dalamud/internal/sunshine"
@@ -49,6 +50,8 @@ func main() {
 	}
 	var err error
 	switch cmd {
+	case "internal-owner-file-v1":
+		err = ownerfile.Serve(args, os.Stdin, os.Stdout)
 	case "wizard":
 		err = runWizard(args)
 	case "detect":

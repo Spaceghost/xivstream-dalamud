@@ -2,7 +2,6 @@
 package cpupolicy
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -22,6 +21,7 @@ type Sample struct {
 	Total, Idle uint64
 	ContainerNS uint64
 	At          time.Time
+	Source      string
 }
 
 // NonGameBusyPercent returns whole-system CPU busy percentage after subtracting
@@ -79,12 +79,10 @@ func Run(c config.Config) error {
 			return err
 		}
 	}
-	previous, err := readSample(c.Incus.Container)
-	if err != nil {
-		return err
-	}
-	busyFor, idleFor := time.Duration(0), time.Duration(0)
-	if err := writeStatus(mode, "unknown", c); err != nil {
+	current = p.BusyCPUs
+	window := loadWindow{}
+	allocation := allocationState{mode: mode, cpus: current}
+	if err := writeStatus(mode, "unknown", current, "warming", "", c); err != nil {
 		log.Printf("cpu-policy status: %v", err)
 	}
 
@@ -92,45 +90,27 @@ func Run(c config.Config) error {
 	defer ticker.Stop()
 	for range ticker.C {
 		now, err := readSample(c.Incus.Container)
+		sampleError := ""
 		if err != nil {
 			log.Printf("cpu-policy sample: %v", err)
-			busyFor, idleFor = 0, 0
-			previous = Sample{}
-			continue
+			sampleError = err.Error()
+			now = Sample{} // unknown never earns the idle allocation
 		}
-		if previous.At.IsZero() || now.ContainerNS < previous.ContainerNS {
-			previous = now
-			busyFor, idleFor = 0, 0
-			continue
+		percent, known, wanted := window.observe(now, p, runtime.NumCPU())
+		if err := allocation.apply(wanted, p, func(cpus string) error { return setLimit(c.Incus.Container, cpus) }); err != nil {
+			log.Printf("cpu-policy allocation: %v", err)
+			sampleError = err.Error()
 		}
-		percent := NonGameBusyPercent(previous, now, runtime.NumCPU())
-		previous = now
-		switch {
-		case percent >= p.BusyThresholdPercent:
-			busyFor += sampleInterval
-			idleFor = 0
-		case percent <= p.IdleThresholdPercent:
-			idleFor += sampleInterval
-			busyFor = 0
-		default:
-			busyFor, idleFor = 0, 0
+		if mode != allocation.mode {
+			mode = allocation.mode
+			log.Printf("CPU policy %s; set %s limits.cpu=%s", mode, c.Incus.Container, allocation.cpus)
 		}
-		if mode != "busy" && busyFor >= time.Duration(p.BusyAfterSeconds)*time.Second {
-			if err := setLimit(c.Incus.Container, p.BusyCPUs); err != nil {
-				log.Printf("cpu-policy restrict: %v", err)
-			} else {
-				mode, busyFor = "busy", 0
-				log.Printf("host is busy; set %s limits.cpu=%s", c.Incus.Container, p.BusyCPUs)
-			}
-		} else if mode != "idle" && idleFor >= time.Duration(p.IdleAfterSeconds)*time.Second {
-			if err := setLimit(c.Incus.Container, p.IdleCPUs); err != nil {
-				log.Printf("cpu-policy expand: %v", err)
-			} else {
-				mode, idleFor = "idle", 0
-				log.Printf("host is idle; set %s limits.cpu=%s", c.Incus.Container, p.IdleCPUs)
-			}
+		current = allocation.cpus
+		measurement := "unknown"
+		if known {
+			measurement = strconv.Itoa(percent)
 		}
-		if err := writeStatus(mode, strconv.Itoa(percent), c); err != nil {
+		if err := writeStatus(mode, measurement, current, now.Source, sampleError, c); err != nil {
 			log.Printf("cpu-policy status: %v", err)
 		}
 	}
@@ -138,6 +118,12 @@ func Run(c config.Config) error {
 }
 
 func readSample(container string) (Sample, error) {
+	usage, source, err := containerUsage(container, os.ReadFile, apiContainerUsage)
+	if err != nil {
+		return Sample{}, err
+	}
+	// Read host counters AFTER a potentially slow API fallback, not seconds
+	// before it. The kernel fast path keeps both sides of this sample adjacent.
 	data, err := os.ReadFile("/proc/stat")
 	if err != nil {
 		return Sample{}, err
@@ -164,34 +150,19 @@ func readSample(container string) (Sample, error) {
 	if len(values) > 4 {
 		idle += values[4]
 	}
-	out, err := sys.OutputTimeout(4*time.Second, "incus", "--force-local", "query", "/1.0/instances/"+container+"/state")
-	if err != nil {
-		return Sample{}, err
-	}
-	var state struct {
-		CPU struct {
-			Usage *uint64 `json:"usage"`
-		} `json:"cpu"`
-	}
-	if err := json.Unmarshal([]byte(out), &state); err != nil {
-		return Sample{}, err
-	}
-	if state.CPU.Usage == nil {
-		return Sample{}, fmt.Errorf("container CPU usage unavailable")
-	}
-	return Sample{Total: total, Idle: idle, ContainerNS: *state.CPU.Usage, At: time.Now()}, nil
+	return Sample{Total: total, Idle: idle, ContainerNS: usage, At: time.Now(), Source: source}, nil
 }
 
 func limit(container string) (string, error) {
-	return sys.Output("incus", "--force-local", "config", "get", container, "limits.cpu")
+	return sys.OutputTimeout(4*time.Second, "incus", "--force-local", "config", "get", container, "limits.cpu")
 }
 
 func setLimit(container, cpus string) error {
-	_, err := sys.Output("incus", "--force-local", "config", "set", container, "limits.cpu="+cpus)
+	_, err := sys.OutputTimeout(4*time.Second, "incus", "--force-local", "config", "set", container, "limits.cpu="+cpus)
 	return err
 }
 
-func writeStatus(mode, percent string, c config.Config) error {
+func writeStatus(mode, percent, current, source, sampleError string, c config.Config) error {
 	dir := os.Getenv("RUNTIME_DIRECTORY")
 	if dir == "" {
 		dir = "/run/xivstream-cpu-policy"
@@ -199,12 +170,15 @@ func writeStatus(mode, percent string, c config.Config) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	current, err := limit(c.Incus.Container)
-	if err != nil {
-		current = "unknown"
+	// Status must not introduce another daemon round trip into every sample.
+	// limits_cpu is the last confirmed successful startup/read or policy write.
+	sampleError = strings.Join(strings.Fields(sampleError), " ")
+	if len(sampleError) > 400 {
+		sampleError = sampleError[:400]
 	}
-	text := fmt.Sprintf("mode=%s\nnon_game_busy_percent=%s\ncontainer=%s\nlimits_cpu=%s\nbusy_cpus=%s\nidle_cpus=%s\n",
-		mode, percent, c.Incus.Container, current, c.Incus.CPUPolicy.BusyCPUs, c.Incus.CPUPolicy.IdleCPUs)
+	text := fmt.Sprintf("mode=%s\nnon_game_busy_percent=%s\ncontainer=%s\nlimits_cpu=%s\nlimits_source=last_confirmed\nbusy_cpus=%s\nidle_cpus=%s\nsample_source=%s\nsample_error=%s\nupdated_at=%s\n",
+		mode, percent, c.Incus.Container, current, c.Incus.CPUPolicy.BusyCPUs, c.Incus.CPUPolicy.IdleCPUs,
+		source, sampleError, time.Now().UTC().Format(time.RFC3339))
 	temporary := filepath.Join(dir, "status.tmp")
 	if err := os.WriteFile(temporary, []byte(text), 0o644); err != nil {
 		return err

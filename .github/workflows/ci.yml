@@ -32,6 +32,15 @@ jobs:
         with:
           version: "~> v2"
           args: release --snapshot --clean --skip=publish
+      - name: Install isolated package-test dependencies
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap rpm cpio binutils zstd
+      - name: Check packaged CPU policy without a real service or game
+        run: bash tools/check_cpu_packages.sh dist
+      - name: Check Ghostty owner helper in an isolated synthetic home
+        run: |
+          xivstream_owner_gate=$(mktemp -d "$RUNNER_TEMP/xivstream-owner.XXXXXX")
+          go build -o "$xivstream_owner_gate/xivstream" ./cmd/xivstream
+          python3 tools/test_ghostty_owner_package.py --binary "$xivstream_owner_gate/xivstream"
   nix:
     runs-on: ubuntu-latest
     steps:

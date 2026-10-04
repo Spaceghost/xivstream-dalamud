@@ -42,12 +42,9 @@ func (b *builder) cpuPolicySteps() []plan.Step {
 				_, active := sys.Output("systemctl", "is-active", "--quiet", unit)
 				return enabled != nil && active != nil, nil
 			}, func() error {
-				if _, err := sys.Output("systemctl", "disable", "--now", unit); err != nil {
-					return err
-				}
-				_, err := sys.Output("incus", "--force-local", "config", "set", b.c.Incus.Container, "limits.cpu="+b.c.Incus.CPU)
+				_, err := sys.Output("systemctl", "disable", "--now", unit)
 				return err
-			})}
+			}), restoreStaticCPULimit(b.c.Incus.Container, b.c.Incus.CPU, sys.Output)}
 	}
 	content := string(render("cpu-policy.service", b.view(false)))
 	if exe, err := os.Executable(); err == nil && exe == "/usr/bin/xivstream" {
@@ -83,4 +80,19 @@ func (b *builder) cpuPolicySteps() []plan.Step {
 		})
 	restart.IfChanged = true
 	return []plan.Step{file, start, restart}
+}
+
+// Restoring the allocation is independent of stopping the service: a prior
+// apply may have stopped it successfully and then failed at the Incus write.
+// It also remains necessary when the user changes incus.cpu while disabled.
+func restoreStaticCPULimit(container, cpus string, output func(...string) (string, error)) plan.Step {
+	return step(plan.Local{}, "Restore the static CPU allocation", "Apply incus.cpu even if the dynamic policy is already stopped.",
+		[]string{sys.Quote([]string{"incus", "--force-local", "config", "set", container, "limits.cpu=" + cpus})},
+		func() (bool, error) {
+			current, err := output("incus", "--force-local", "config", "get", container, "limits.cpu")
+			return err == nil && strings.TrimSpace(current) == cpus, err
+		}, func() error {
+			_, err := output("incus", "--force-local", "config", "set", container, "limits.cpu="+cpus)
+			return err
+		})
 }

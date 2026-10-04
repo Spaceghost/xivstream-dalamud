@@ -156,7 +156,18 @@ type Mods struct {
 	Testing bool `toml:"testing"`
 	// Companions: install what a plugin needs outside the game (ghostty-agent
 	// for GhosttyDalamud, the almanac gateway link for Almanac).
-	Companions bool `toml:"companions"`
+	Companions bool    `toml:"companions"`
+	Ghostty    Ghostty `toml:"ghostty"`
+}
+
+// Ghostty connects an Incus game to a native agent running as a real host
+// account. No account name is inferred from the container's Session.User.
+type Ghostty struct {
+	HostUser         string `toml:"host_user"`
+	HostLabel        string `toml:"host_label"`
+	HostPort         int    `toml:"host_port"`
+	ProxyPort        int    `toml:"proxy_port"`
+	IncludeContainer bool   `toml:"include_container"`
 }
 
 type Session struct {
@@ -195,7 +206,7 @@ func Default() Config {
 		Audio:   Audio{StreamOnly: true},
 		Session: Session{Headless: true, User: "player"},
 		Selkies: Selkies{Port: 8080, User: "ffxiv"},
-		Mods:    Mods{Repos: []string{DefaultModRepo}, Companions: true},
+		Mods:    Mods{Repos: []string{DefaultModRepo}, Companions: true, Ghostty: Ghostty{HostPort: 7777, ProxyPort: 7780}},
 	}
 }
 
@@ -297,6 +308,9 @@ func Load(path string) (Config, error) {
 }
 
 func (c Config) Validate() error {
+	if err := c.Mods.Ghostty.Validate(); err != nil {
+		return err
+	}
 	switch c.Topology {
 	case TopologyIncus, TopologyHost:
 	default:
@@ -347,6 +361,41 @@ func (c Config) Validate() error {
 		}
 	}
 	return nil
+}
+
+func (g Ghostty) Validate() error {
+	for _, port := range []int{g.HostPort, g.ProxyPort} {
+		if port < 1024 || port > 65535 {
+			return fmt.Errorf("mods.ghostty host_port and proxy_port must be unprivileged TCP ports (1024–65535)")
+		}
+	}
+	if g.IncludeContainer && g.ProxyPort == 7777 {
+		return fmt.Errorf("mods.ghostty proxy_port must differ from the optional container agent's port 7777")
+	}
+	if g.HostUser != "" && (!safeAccount(g.HostUser) || g.HostUser == "root") {
+		return fmt.Errorf("mods.ghostty.host_user must name an ordinary, non-root host account")
+	}
+	if len(g.HostLabel) > 64 || strings.ContainsAny(g.HostLabel, "\x00\r\n\t") {
+		return fmt.Errorf("mods.ghostty.host_label must be at most 64 bytes without control characters")
+	}
+	for _, ch := range g.HostLabel {
+		if ch < 32 || ch == 127 {
+			return fmt.Errorf("mods.ghostty.host_label must not contain control characters")
+		}
+	}
+	return nil
+}
+
+func safeAccount(s string) bool {
+	if len(s) == 0 || len(s) > 64 || s[0] == '-' {
+		return false
+	}
+	for _, ch := range s {
+		if !(ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch == '_' || ch == '-' || ch == '.') {
+			return false
+		}
+	}
+	return true
 }
 
 func validCPUSet(value string) bool {
