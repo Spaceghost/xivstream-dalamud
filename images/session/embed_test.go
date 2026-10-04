@@ -14,7 +14,7 @@ func TestContext(t *testing.T) {
 	if !strings.Contains(string(cf), "ARG XIVLAUNCHER_VERSION="+XIVLauncherVersion+"\n") {
 		t.Error("the Containerfile's default launcher version is XIVLauncherVersion")
 	}
-	for _, name := range []string{"entrypoint.sh", "session.sh", "launcher.sh", "ghostty-agent.sh", "sway.conf", "nvidia.conf"} {
+	for _, name := range []string{"entrypoint.sh", "session.sh", "launcher.sh", "ghostty-agent.sh", "nvidia.conf"} {
 		if !strings.Contains(string(cf), name) {
 			t.Errorf("the Containerfile does not copy %s", name)
 		}

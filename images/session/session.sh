@@ -1,12 +1,12 @@
 #!/bin/bash
 # xivstream: the Wolf session, as the player, inside a session D-Bus
 # (dbus-run-session, started by entrypoint.sh). Starts what the Incus
-# session's user services did, then sway nested on Wolf's Wayland display.
+# session's user services did, then gamescope nested on Wolf's Wayland display.
 set -u
 LIB=/usr/local/lib/xivstream/session
 log() { printf '[xivstream-session] %s\n' "$*" >&2; }
 
-export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=sway XDG_SESSION_DESKTOP=sway
+export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=gamescope XDG_SESSION_DESKTOP=gamescope
 cd "$HOME" 2>/dev/null || cd /
 
 if [ "${XIVSTREAM_SESSION_MODE:-game}" = game ]; then
@@ -47,18 +47,17 @@ if [ "${XIVSTREAM_SESSION_MODE:-game}" = game ]; then
     fi
 fi
 
-# sway, nested on Wolf's compositor (it picks its Wayland backend by itself
-# when WAYLAND_DISPLAY is set), sized to this client's stream as GoW's
-# launch-comp.sh does (the refresh rate is Wolf's compositor's).
-conf=$XDG_RUNTIME_DIR/xivstream-sway.conf
-{
-    printf 'output * resolution %sx%s position 0,0\n\n' "${GAMESCOPE_WIDTH:-1920}" "${GAMESCOPE_HEIGHT:-1080}"
-    cat "$LIB/sway.conf"
-    if [ "${XIVSTREAM_SESSION_MODE:-game}" = game ]; then
-        printf '\nexec %s\nexec %s\n' "$LIB/ghostty-agent.sh" "$LIB/launcher.sh"
-    else
-        msg=${XIVSTREAM_MESSAGE//\"/\'}
-        printf '\nexec swaynag -t warning -m "%s"\n' "$msg"
-    fi
-} >"$conf"
-exec sway --unsupported-gpu -c "$conf"
+# The in-game terminal's agent needs no display (--windows none): it runs
+# beside the game for as long as the session does.
+"$LIB/ghostty-agent.sh" &
+
+# gamescope, nested on Wolf's compositor (a Wayland client of it), gives the
+# launcher and Wine their Xwayland: Wolf's compositor has none, by design
+# (upstream's how-it-works). Not sway: wlroots' nested Wayland backend asserts
+# when Wolf's compositor announces both wl_drm and linux-dmabuf feedback
+# (legacy_drm_handle_device). Sized to this client's stream as GoW does.
+w=${GAMESCOPE_WIDTH:-1920} h=${GAMESCOPE_HEIGHT:-1080} r=${GAMESCOPE_REFRESH:-60}
+if [ "${XIVSTREAM_SESSION_MODE:-game}" = game ]; then
+    exec gamescope -b -W "$w" -H "$h" -r "$r" -- "$LIB/launcher.sh"
+fi
+exec gamescope -b -W "$w" -H "$h" -r "$r" -- xmessage -center "$XIVSTREAM_MESSAGE"

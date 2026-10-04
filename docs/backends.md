@@ -127,7 +127,7 @@ What `xivstream apply` sets up, and why:
     the empty-password login keyring, and the voice microphone as a PulseAudio tunnel source in
     Wolf's PulseAudio (named `xivstream-dualsense-mic`, so ghostty-voice picks it), replacing
     the Incus session's PipeWire tunnel;
-  - runs sway nested on Wolf's compositor (fullscreen rules, flat pointer acceleration),
+  - runs gamescope nested on Wolf's compositor (Wolf's has no Xwayland; nested sway trips a wlroots assertion on its wl_drm + dmabuf-feedback globals),
     which starts ghostty-agent (`~/.local/bin` with `~/.local/lib`, as the Incus session's
     unit override did) and the XIVLauncher loop with `DXVK_FRAME_RATE`.
 - **The session container** is created by Wolf from xivstream's `base_create_json`: the

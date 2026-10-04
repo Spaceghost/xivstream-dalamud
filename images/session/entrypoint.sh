@@ -108,7 +108,6 @@ if [ -d "$PLAYER_HOME/.xlcore/logs" ]; then
 fi
 export XIVSTREAM_SESSION_MODE=$mode XIVSTREAM_MESSAGE=$message
 export HOME=$PLAYER_HOME USER=player LOGNAME=player SHELL=/bin/bash
-export SWAYSOCK=$XDG_RUNTIME_DIR/xivstream-sway.sock
 
 if [ -n "$groups" ]; then
     group_args=(--groups "$groups")
@@ -119,18 +118,14 @@ setpriv --reuid=1000 --regid=1000 "${group_args[@]}" --inh-caps=-all --no-new-pr
     dbus-run-session -- "$LIB/session.sh" &
 child=$!
 
-# Wolf stops the container with a two-second timeout (then SIGKILL). Ask the
-# game window to close in case it is at the title screen; a logged-in game
-# needs the player to log out first (see docs/backends.md).
+# Wolf stops the container with a two-second timeout (then SIGKILL): there is
+# no time for the game to save, so log out in game before quitting the session
+# in Moonlight (see docs/backends.md).
 stopping=0
 on_stop() {
     [ "$stopping" = 1 ] && return
     stopping=1
-    log "stop requested: closing the game window, then the session"
-    if [ -S "$SWAYSOCK" ]; then
-        swaymsg -s "$SWAYSOCK" '[title="^FINAL FANTASY XIV"] kill' >/dev/null 2>&1 || true
-        sleep 1
-    fi
+    log "stop requested: ending the session"
     kill -TERM "$child" 2>/dev/null
 }
 trap on_stop TERM INT HUP

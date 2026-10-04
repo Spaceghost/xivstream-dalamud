@@ -2,7 +2,7 @@
 # xivstream: the in-session ghostty-agent (127.0.0.1:7777, the PTY server
 # Ghostty for FFXIV talks to), as the Incus session ran it from its
 # ghostty-agent.service override: the home's build with its own libraries,
-# else the packaged one. Started by sway, so the clipboard (wl-copy) works;
+# else the packaged one. Started beside gamescope, with Wolf's WAYLAND_DISPLAY, so the clipboard (wl-copy) works;
 # restarted if it exits.
 while :; do
     if [ -x "$HOME/.local/bin/ghostty-agent" ]; then

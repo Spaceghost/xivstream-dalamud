@@ -30,7 +30,7 @@ COPY packages.txt /tmp/packages.txt
 RUN dnf -y install --setopt=install_weak_deps=False --skip-unavailable $(cat /tmp/packages.txt) \
  && rm /tmp/packages.txt && dnf clean all
 RUN dnf -y install --setopt=install_weak_deps=False \
-      sway swaybg xorg-x11-server-Xwayland \
+      gamescope xmessage xorg-x11-server-Xwayland \
       gnome-keyring libsecret dbus-daemon \
       pulseaudio-utils \
       wine-core wine-common \
@@ -47,11 +47,11 @@ RUN dnf -y install --setopt=install_weak_deps=False \
       iproute iputils hostname file less vim-minimal glibc-langpack-en tzdata \
  && dnf clean all
 
-# Fedora's sway carries cap_sys_nice as a file capability. The session runs
+# Fedora's gamescope carries cap_sys_nice as a file capability. The session runs
 # with no new privileges and no capabilities, and execve of a file whose
-# capabilities cannot be granted fails (EPERM), so drop them: sway only uses it
+# capabilities cannot be granted fails (EPERM), so drop them: gamescope only uses it
 # to raise its own priority.
-RUN setcap -r /usr/bin/sway 2>/dev/null || true
+RUN setcap -r /usr/bin/gamescope 2>/dev/null; true
 
 # The player: uid/gid 1000, the owner of the shared home. -M: the home is never
 # created here; /home/player is the host's subvolume, bind-mounted by Wolf.
@@ -71,7 +71,7 @@ RUN if [ ! -x /opt/xivlauncher/XIVLauncher.Core ]; then \
 
 # Wolf mounts the NVIDIA driver volume at /usr/nvidia (as GoW's images expect).
 COPY nvidia.conf /etc/ld.so.conf.d/nvidia.conf
-COPY entrypoint.sh session.sh launcher.sh ghostty-agent.sh sway.conf /usr/local/lib/xivstream/session/
+COPY entrypoint.sh session.sh launcher.sh ghostty-agent.sh /usr/local/lib/xivstream/session/
 RUN chmod 755 /usr/local/lib/xivstream/session/*.sh
 
 ENV LANG=C.UTF-8
