@@ -95,6 +95,12 @@ else
         log "the game lock is held elsewhere; showing a message instead of a second game"
     fi
 fi
+# Wolf removes the container (and its log) when a session ends: keep the
+# session's output in the home as well.
+if [ -d "$PLAYER_HOME/.xlcore/logs" ]; then
+    exec > >(tee -a "$PLAYER_HOME/.xlcore/logs/xivstream-session.log") 2>&1
+    log "session $(date -Is) for Wolf session ${WOLF_SESSION_ID:-?} (${GAMESCOPE_WIDTH:-?}x${GAMESCOPE_HEIGHT:-?})"
+fi
 export XIVSTREAM_SESSION_MODE=$mode XIVSTREAM_MESSAGE=$message
 export HOME=$PLAYER_HOME USER=player LOGNAME=player SHELL=/bin/bash
 export SWAYSOCK=$XDG_RUNTIME_DIR/xivstream-sway.sock
