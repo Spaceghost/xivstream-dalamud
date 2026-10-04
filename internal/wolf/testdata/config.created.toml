@@ -115,7 +115,7 @@ uuid = "00000000-1111-4222-8333-444444444444"
     [profiles.apps.runner]
       base_create_json = "{\"HostConfig\":{\"CapAdd\":[\"NET_RAW\",\"MKNOD\",\"NET_ADMIN\"],\"DeviceCgroupRules\":[\"c 13:* rmw\"],\"IpcMode\":\"host\",\"Memory\":12884901888,\"NetworkMode\":\"xivstream\",\"Privileged\":false,\"SecurityOpt\":[\"label=disable\"]},\"NetworkingConfig\":{\"EndpointsConfig\":{\"xivstream\":{\"IPAMConfig\":{\"IPv4Address\":\"10.89.10.10\"}}}}}"
       devices = []
-      env = ["DXVK_FRAME_RATE=60", "XIVSTREAM_GATEWAY=10.89.10.1", "XIVSTREAM_FORWARDS=41881 7787 7788 7789 8178 4713", "XIVSTREAM_HOME_UNIT=var-lib-xivstream-home.mount", "XIVSTREAM_MIC_PORT=4713"]
+      env = ["DXVK_FRAME_RATE=60", "XIVSTREAM_GATEWAY=10.89.10.1", "XIVSTREAM_FORWARDS=41881:41881 7787:57787 7788:57788 7789:57789 8178:58178 4713:54713", "XIVSTREAM_HOME_UNIT=var-lib-xivstream-home.mount", "XIVSTREAM_MIC_PORT=54713"]
       image = "localhost/xivstream-session:0123456789abcdef"
       mounts = ["/var/lib/xivstream/home:/home/player:rw", "/home/jack/.local/bin/claude:/usr/local/bin/claude:ro", "/home/jack/.claude.json:/home/player/.claude.json:rw", "/home/jack/.claude:/home/player/.claude:rw", "/home/jack/.local/bin/codex:/usr/local/bin/codex:ro", "/home/jack/.codex:/home/player/.codex:rw"]
       name = "WolfFFXIV"

@@ -51,7 +51,7 @@ func Firewall(s Setup) []byte {
 	}
 	var fwd []string
 	for _, f := range w.Forwards {
-		fwd = append(fwd, strconv.Itoa(f.Port))
+		fwd = append(fwd, strconv.Itoa(f.GatewayPort()))
 	}
 	sort.Slice(fwd, func(i, j int) bool { a, _ := strconv.Atoi(fwd[i]); b, _ := strconv.Atoi(fwd[j]); return a < b })
 

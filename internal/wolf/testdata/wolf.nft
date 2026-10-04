@@ -40,10 +40,10 @@ table inet xivstream_wolf {
 		udp dport { 47999, 48100, 48200 } counter drop
 		# the session: replies, and the forwards on its gateway; nothing else here
 		iifname "xivstream0" ct state established,related accept
-		iifname "xivstream0" ip daddr 10.89.10.1 tcp dport { 4713, 7787, 7788, 7789, 8178, 41881 } accept
+		iifname "xivstream0" ip daddr 10.89.10.1 tcp dport { 41881, 54713, 57787, 57788, 57789, 58178 } accept
 		iifname "xivstream0" counter drop
 		# the forwards are the session's (and Wolf's PulseAudio's, for the microphone)
-		ip daddr 10.89.10.1 tcp dport { 4713, 7787, 7788, 7789, 8178, 41881 } iifname != "lo" counter drop
+		ip daddr 10.89.10.1 tcp dport { 41881, 54713, 57787, 57788, 57789, 58178 } iifname != "lo" counter drop
 	}
 
 	chain forward {

@@ -77,6 +77,18 @@ type WolfForward struct {
 	Target string `toml:"target"`
 }
 
+// GatewayPort is where the host listens for this forward on the session
+// network's gateway. Ports below 32768 carry SELinux port types (unreserved,
+// pulseaudio, ...) that systemd's socket units may not bind, so those move to
+// 50000 + port%10000, clear of Wolf's own ports; the session still dials
+// 127.0.0.1:<Port>.
+func (f WolfForward) GatewayPort() int {
+	if f.Port >= 32768 {
+		return f.Port
+	}
+	return 50000 + f.Port%10000
+}
+
 // WolfInbound: Peers reaching LegacyAddress on Ports reach the session.
 type WolfInbound struct {
 	Ports []int    `toml:"ports"`
@@ -172,6 +184,12 @@ func (w Wolf) Validate() error {
 			return fmt.Errorf("wolf.forwards %s and %s both use port %d", other, f.Name, f.Port)
 		}
 		seen[f.Port] = f.Name
+		if gw := f.GatewayPort(); gw != f.Port {
+			if other, dup := seen[gw]; dup {
+				return fmt.Errorf("wolf.forwards %s and %s both use gateway port %d", other, f.Name, gw)
+			}
+			seen[gw] = f.Name
+		}
 		if _, err := netip.ParseAddrPort(f.Target); err != nil {
 			return fmt.Errorf("wolf.forwards %s: target %q must be IPv4:port", f.Name, f.Target)
 		}

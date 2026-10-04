@@ -180,7 +180,7 @@ FreeBind=yes
 
 [Install]
 WantedBy=sockets.target
-`, f.Name, s.Wolf.Gateway(), f.Port, f.Target))
+`, f.Name, s.Wolf.Gateway(), f.GatewayPort(), f.Target))
 }
 
 // ForwardService relays the socket's connections to the target.

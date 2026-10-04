@@ -23,8 +23,11 @@ if [ "${XIVSTREAM_SESSION_MODE:-game}" = game ]; then
     if [ -z "$gateway" ]; then
         gateway=$(ip -4 route show default 2>/dev/null | awk '{print $3; exit}')
     fi
-    for port in ${XIVSTREAM_FORWARDS:-}; do
-        socat "TCP-LISTEN:$port,bind=127.0.0.1,reuseaddr,fork" "TCP:$gateway:$port" &
+    # Each entry is <session port>:<gateway port> (the host listens high: see
+    # config.WolfForward.GatewayPort).
+    for fwd in ${XIVSTREAM_FORWARDS:-}; do
+        port=${fwd%%:*} gwport=${fwd#*:}
+        socat "TCP-LISTEN:$port,bind=127.0.0.1,reuseaddr,fork" "TCP:$gateway:$gwport" &
     done
 
     # The voice microphone: a tunnel source in Wolf's PulseAudio, replacing the

@@ -120,7 +120,7 @@ func TestFirewall(t *testing.T) {
 	for _, want := range []string{
 		`tcp dport { 47984, 47989, 48010 } iifname "tailscale0" ip saddr @wolf_clients accept`,
 		`udp dport { 47999, 48100, 48200 } iifname "tailscale0" ip saddr @wolf_clients accept`,
-		`iifname "xivstream0" ip daddr 10.89.10.1 tcp dport { 4713, 7787, 7788, 7789, 8178, 41881 } accept`,
+		`iifname "xivstream0" ip daddr 10.89.10.1 tcp dport { 41881, 54713, 57787, 57788, 57789, 58178 } accept`,
 		`iifname "xivstream0" oifname "tailscale0" counter drop`,
 		`ip daddr 10.61.200.110 tcp dport { 41800, 41881, 7777 } ip saddr @inbound_peers dnat ip to 10.89.10.10`,
 	} {
@@ -218,7 +218,7 @@ func TestApp(t *testing.T) {
 		t.Errorf("endpoint: %v", ep)
 	}
 	env := strings.Join(AppEnv(s), "\n")
-	for _, want := range []string{"DXVK_FRAME_RATE=60", "XIVSTREAM_GATEWAY=10.89.10.1", "XIVSTREAM_FORWARDS=41881 7787 7788 7789 8178 4713", "XIVSTREAM_MIC_PORT=4713"} {
+	for _, want := range []string{"DXVK_FRAME_RATE=60", "XIVSTREAM_GATEWAY=10.89.10.1", "XIVSTREAM_FORWARDS=41881:41881 7787:57787 7788:57788 7789:57789 8178:58178 4713:54713", "XIVSTREAM_MIC_PORT=54713"} {
 		if !strings.Contains(env, want) {
 			t.Errorf("env lacks %s:\n%s", want, env)
 		}

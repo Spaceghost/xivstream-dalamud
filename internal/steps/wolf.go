@@ -296,7 +296,7 @@ func (b *builder) wolf() ([]plan.Step, error) {
 		base := wolf.ForwardUnit(f)
 		sockets = append(sockets, base+".socket")
 		add(ch.track("units", ch.track("forwards", plan.File(host, "/etc/systemd/system/"+base+".socket", wolf.ForwardSocket(s, f), 0o644, "",
-			"Write the "+f.Name+" forward ("+fmt.Sprintf("%s:%d to %s", gw, f.Port, f.Target)+")", ""))))
+			"Write the "+f.Name+" forward ("+fmt.Sprintf("%s:%d to %s", gw, f.GatewayPort(), f.Target)+")", ""))))
 		add(ch.track("units", ch.track("forwards", plan.File(host, "/etc/systemd/system/"+base+".service", wolf.ForwardService(s, f), 0o644, "",
 			"Write the "+f.Name+" relay", ""))))
 	}

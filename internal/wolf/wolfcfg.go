@@ -51,7 +51,7 @@ func CreateJSON(s Setup) string {
 func AppEnv(s Setup) []string {
 	var ports []string
 	for _, f := range s.Wolf.Forwards {
-		ports = append(ports, fmt.Sprint(f.Port))
+		ports = append(ports, fmt.Sprintf("%d:%d", f.Port, f.GatewayPort()))
 	}
 	env := []string{
 		fmt.Sprintf("DXVK_FRAME_RATE=%d", s.Game.FPS),
@@ -60,7 +60,7 @@ func AppEnv(s Setup) []string {
 		"XIVSTREAM_HOME_UNIT=" + s.HomeUnit(),
 	}
 	if f, ok := s.MicForward(); ok {
-		env = append(env, fmt.Sprintf("XIVSTREAM_MIC_PORT=%d", f.Port))
+		env = append(env, fmt.Sprintf("XIVSTREAM_MIC_PORT=%d", f.GatewayPort()))
 	}
 	return env
 }
