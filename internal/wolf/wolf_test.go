@@ -60,12 +60,21 @@ func TestFixtureValidates(t *testing.T) {
 	}
 }
 
+func TestEnvFileContent(t *testing.T) {
+	if got := string(EnvFileContent("/dev/dri/renderD128")); got != "WOLF_RENDER_NODE=/dev/dri/renderD128\n" {
+		t.Errorf("got %q", got)
+	}
+	if got := string(EnvFileContent("")); strings.Contains(got, "WOLF_RENDER_NODE") {
+		t.Errorf("no render node still sets WOLF_RENDER_NODE: %q", got)
+	}
+}
+
 func TestQuadlet(t *testing.T) {
 	s := fixture()
 	q := Quadlet(s)
 	golden(t, "wolf.container", q)
 	for _, want := range []string{"Image=" + ServerImage, "AddDevice=/dev/nvidia-uvm", "AddDevice=-/dev/nvidia-uvm-tools", "ExecStartPre=-/usr/bin/nvidia-modprobe -u -c0", "Volume=nvidia-driver-vol:/usr/nvidia:rw",
-		"Environment=NVIDIA_DRIVER_VOLUME_NAME=nvidia-driver-vol", "Environment=WOLF_RENDER_NODE=/dev/dri/renderD129",
+		"Environment=NVIDIA_DRIVER_VOLUME_NAME=nvidia-driver-vol", "EnvironmentFile=/run/xivstream/wolf.env",
 		"Environment=WOLF_USE_ZERO_COPY=FALSE", "Environment=WOLF_STOP_CONTAINER_ON_EXIT=TRUE", "Conflicts=xivstream-sunshine.service",
 		"RequiresMountsFor=/var/lib/xivstream/home", "ExecStartPre=/usr/local/bin/xivstream wolf-preflight",
 		"ExecStopPost=-/usr/local/bin/xivstream wolf-cleanup", "Requires=podman.socket xivstream-wolf-firewall.service xivstream-nvidia-driver-vol.service",

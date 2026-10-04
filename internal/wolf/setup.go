@@ -44,7 +44,10 @@ const (
 	ConfigFile     = "/etc/wolf/cfg/config.toml"
 	HostRuntimeDir = "/run/wolf"      // on the host: Wolf's sockets (API, Wayland, PulseAudio)
 	RuntimeDir     = "/run/user/wolf" // the same directory in Wolf's and the session's containers
-	SocketPath     = HostRuntimeDir + "/wolf.sock"
+	// EnvFile: what wolf-preflight found at this start (the render node), read
+	// by Podman when it runs Wolf. Render node numbers can change across boots.
+	EnvFile    = "/run/xivstream/wolf.env"
+	SocketPath = HostRuntimeDir + "/wolf.sock"
 
 	RunnerName       = "WolfFFXIV" // Wolf names each session's container WolfFFXIV_<session id>
 	AppTitle         = "Final Fantasy XIV"
@@ -82,6 +85,14 @@ type Setup struct {
 	GameContainer string
 	// Fallback: write xivstream-sunshine.service (a Sunshine config was kept).
 	Fallback bool
+}
+
+// EnvFileContent is EnvFile for a render node ("" = Wolf's default).
+func EnvFileContent(renderNode string) []byte {
+	if renderNode == "" {
+		return []byte("# no render node found: Wolf's default\n")
+	}
+	return []byte("WOLF_RENDER_NODE=" + renderNode + "\n")
 }
 
 // BridgeName is the Podman network's bridge interface (Linux allows 15 bytes).

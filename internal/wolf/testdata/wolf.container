@@ -42,7 +42,9 @@ Volume=/run/udev:/run/udev:rw
 Volume=/run/wolf:/run/user/wolf:rw
 Environment=XDG_RUNTIME_DIR=/run/user/wolf
 Environment=WOLF_SOCKET_PATH=/run/user/wolf/wolf.sock
-Environment=WOLF_RENDER_NODE=/dev/dri/renderD129
+# WOLF_RENDER_NODE, found at every start by wolf-preflight: render node
+# numbers can change across boots.
+EnvironmentFile=/run/xivstream/wolf.env
 Environment=WOLF_USE_ZERO_COPY=FALSE
 Environment=WOLF_STOP_CONTAINER_ON_EXIT=TRUE
 
@@ -56,8 +58,9 @@ TimeoutStopSec=60
 ExecStartPre=-/usr/bin/nvidia-modprobe -c0
 ExecStartPre=-/usr/bin/nvidia-modprobe -m
 ExecStartPre=-/usr/bin/nvidia-modprobe -u -c0
-# Refuses while the Incus game container runs, checks the home, clears
-# leftover session containers, and merges xivstream's app into Wolf's config.
+# Refuses while the Incus game container runs, checks the home, finds the
+# render node, clears leftover session containers, and merges xivstream's
+# app into Wolf's config.
 ExecStartPre=/usr/local/bin/xivstream wolf-preflight
 # Wolf removes a session's container only when the session ends normally.
 ExecStopPost=-/usr/local/bin/xivstream wolf-cleanup

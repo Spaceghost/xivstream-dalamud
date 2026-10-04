@@ -87,7 +87,10 @@ What `xivstream apply` sets up, and why:
   - Wolf's sockets (its API, each session's Wayland and PulseAudio) live in `/run/wolf` on the
     host, mounted at Wolf's own runtime directory, so the sessions can be given them.
   - `WOLF_RENDER_NODE` is the streaming GPU's render node (Wolf's default is `renderD128`,
-    which on a machine with an iGPU is the wrong card). `WOLF_USE_ZERO_COPY=FALSE` unless
+    which on a machine with an iGPU is the wrong card). Render node numbers follow probe
+    order and can change across boots, so `wolf-preflight` finds it again at every start
+    and writes it to `/run/xivstream/wolf.env`, which the Quadlet reads (`EnvironmentFile=`).
+    On the wrong node Wolf silently falls back to software encoding. `WOLF_USE_ZERO_COPY=FALSE` unless
     `wolf.zero_copy`: NVIDIA's zero-copy path crashes on a second session (#501, #265).
   - `Requires=` the Podman socket, the driver volume and the firewall units;
     `RequiresMountsFor=` the game's home, so Wolf never starts on an empty mountpoint;

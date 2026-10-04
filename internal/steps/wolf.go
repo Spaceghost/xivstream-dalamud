@@ -112,9 +112,16 @@ func active(unit string) bool {
 	_, err := sys.Output("systemctl", "is-active", "-q", unit)
 	return err == nil
 }
+
+// enabled: the unit starts at boot. is-enabled also succeeds for static
+// units (no [Install]), which nothing starts at boot.
 func enabled(unit string) bool {
-	_, err := sys.Output("systemctl", "is-enabled", "-q", unit)
-	return err == nil
+	out, _ := sys.Output("systemctl", "is-enabled", unit)
+	switch strings.TrimSpace(out) {
+	case "enabled", "enabled-runtime", "linked", "linked-runtime", "alias":
+		return true
+	}
+	return false
 }
 
 func daemonReload() error { _, err := sys.Output("systemctl", "daemon-reload"); return err }

@@ -158,6 +158,10 @@ func osRelease(path string) map[string]string {
 	return out
 }
 
+// LinuxGPUs is linuxGPUs on this machine's DRM class, for the commands units
+// run, which must not pay for (or, at boot, socket-activate) all of Run.
+func LinuxGPUs() []GPU { return linuxGPUs("/sys/class/drm") }
+
 // linuxGPUs reads the DRM class: one entry per card with its render node.
 func linuxGPUs(drm string) []GPU {
 	cards, _ := filepath.Glob(filepath.Join(drm, "card[0-9]*"))

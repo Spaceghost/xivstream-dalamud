@@ -79,9 +79,9 @@ func Quadlet(s Setup) []byte {
 	w("Volume=%s:%s:rw", HostRuntimeDir, RuntimeDir)
 	w("Environment=XDG_RUNTIME_DIR=%s", RuntimeDir)
 	w("Environment=WOLF_SOCKET_PATH=%s/wolf.sock", RuntimeDir)
-	if s.RenderNode != "" {
-		w("Environment=WOLF_RENDER_NODE=%s", s.RenderNode)
-	}
+	w("# WOLF_RENDER_NODE, found at every start by wolf-preflight: render node")
+	w("# numbers can change across boots.")
+	w("EnvironmentFile=%s", EnvFile)
 	w("Environment=WOLF_USE_ZERO_COPY=%s", boolEnv(s.Wolf.ZeroCopy))
 	w("Environment=WOLF_STOP_CONTAINER_ON_EXIT=TRUE")
 	if b := s.Stream.PortBase; b != 0 && b != 47989 {
@@ -105,8 +105,9 @@ func Quadlet(s Setup) []byte {
 		w("ExecStartPre=-/usr/bin/nvidia-modprobe -m")
 		w("ExecStartPre=-/usr/bin/nvidia-modprobe -u -c0")
 	}
-	w("# Refuses while the Incus game container runs, checks the home, clears")
-	w("# leftover session containers, and merges xivstream's app into Wolf's config.")
+	w("# Refuses while the Incus game container runs, checks the home, finds the")
+	w("# render node, clears leftover session containers, and merges xivstream's")
+	w("# app into Wolf's config.")
 	w("ExecStartPre=%s wolf-preflight", s.bin())
 	w("# Wolf removes a session's container only when the session ends normally.")
 	w("ExecStopPost=-%s wolf-cleanup", s.bin())

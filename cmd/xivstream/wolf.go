@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -79,10 +80,28 @@ func runWolfPreflight(args []string) error {
 	if err := os.MkdirAll(wolf.HostRuntimeDir, 0o755); err != nil {
 		return err
 	}
+	if err := writeWolfEnv(); err != nil {
+		return err
+	}
 	if err := wolf.Cleanup(sys.Output, logf); err != nil {
 		return err
 	}
 	return steps.WriteWolfConfig(s, logf)
+}
+
+// writeWolfEnv puts the streaming GPU's current render node in wolf.EnvFile:
+// card and render node numbers follow probe order, which changes across boots,
+// and Wolf on the wrong node falls back to software encoding.
+func writeWolfEnv() error {
+	node := ""
+	if gpus := detect.LinuxGPUs(); len(gpus) > 0 {
+		node = gpus[0].RenderNode
+	}
+	if err := os.MkdirAll(filepath.Dir(wolf.EnvFile), 0o755); err != nil {
+		return err
+	}
+	logf("render node: " + node)
+	return os.WriteFile(wolf.EnvFile, wolf.EnvFileContent(node), 0o644)
 }
 
 // runWolfCleanup stops and removes Wolf's session containers (wolf.service's
