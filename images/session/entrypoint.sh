@@ -71,6 +71,11 @@ export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/1000}
 mkdir -p "$XDG_RUNTIME_DIR"
 chown 1000:1000 "$XDG_RUNTIME_DIR"
 chmod 0700 "$XDG_RUNTIME_DIR"
+# Wolf's compositor makes its socket root's, 0755: connecting needs write
+# permission, so give this session's socket (and only it) to the player.
+if [ -n "${WAYLAND_DISPLAY:-}" ] && [ -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ]; then
+    chown 1000:1000 "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY"
+fi
 
 # Refuse an empty home: without the real one, XIVLauncher would start a fresh
 # install (a 90 GB download) into whatever directory is here.
