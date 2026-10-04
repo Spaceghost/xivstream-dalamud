@@ -1,0 +1,473 @@
+#!/usr/bin/python3
+"""Keeps every other workload off the game's CPUs while the game runs.
+
+While the game process runs, every other workload is confined to the fence:
+the online CPUs the game does not own. GRACE seconds after the game exits
+they all get every CPU back, which means their own limits again (Incus
+pinning, unit AllowedCPUs). Two layouts are recognised:
+
+  Incus (the Sunshine setup): the game runs in lxc.payload.<container>. Every
+  other Incus instance (all projects), user.slice, machine.slice and each unit
+  of system.slice except EXEMPT are fenced. The game's own CPUs are Incus's
+  limits.cpu, which xivstream's cpu-policy switches between busy and idle.
+
+  Podman (the Wolf setup): the game runs in a session container, the scope
+  machine.slice/libpod-<id>.scope. user.slice, every other child of
+  machine.slice, every other Incus instance and each system.slice unit except
+  EXEMPT are fenced; the game's scope never is. Here this daemon also does
+  what cpu-policy does for Incus: the scope gets the busy CPUs, and the idle
+  CPUs once the rest of the host has stayed idle for idle_after_seconds (back
+  to busy after busy_after_seconds of load).
+
+The game's CPUs are xivstream's [wolf] cpus_busy/cpus_idle, else its
+[incus.cpu_policy] busy_cpus/idle_cpus (and its thresholds), re-read each time
+the game starts; GAME_CPUS and FENCE_CPUS override them. Containers are fenced
+through their cgroup, because Incus rewrites a container's cpuset whenever it
+rebalances: each POLL re-asserts the fence and remembers what Incus last asked
+for, which is what the container gets back. A container Incus already keeps off
+the game's CPUs is left alone. Host units get a runtime AllowedCPUs from
+systemd. Nothing survives a reboot, and stopping this service gives everything
+back.
+
+EXEMPT defaults to tailscaled.service and wolf.service: the stream reaches its
+client through the host's Tailscale address, so tailscaled carries every frame,
+and Wolf encodes them.
+
+  game-cpu-fence           run (the service)
+  game-cpu-fence release   give everything back (ExecStopPost)
+  game-cpu-fence status    print what would be fenced, change nothing
+
+(Installed by `xivstream apply`; the source is xivstream's
+internal/assets/files/game-cpu-fence.)
+"""
+
+import os
+import subprocess
+import sys
+import time
+import tomllib
+from pathlib import Path
+
+CGROUP = Path(os.environ.get("CGROUP_ROOT", "/sys/fs/cgroup"))
+PROC = Path(os.environ.get("PROC_ROOT", "/proc"))
+CONFIG = Path(os.environ.get("XIVSTREAM_CONFIG", "/etc/xivstream/config.toml"))
+STATE = Path(os.environ.get("RUNTIME_DIRECTORY", "/run/game-cpu-fence")) / "saved"
+SYSTEMCTL = os.environ.get("SYSTEMCTL", "systemctl")
+POLL = float(os.environ.get("POLL", 1))    # the game spends far longer than this in Wine startup
+GRACE = float(os.environ.get("GRACE", 20))  # a crash-and-relaunch does not bounce every cpuset
+SAMPLE = float(os.environ.get("SAMPLE", 5))  # busy/idle measurement interval (as cpu-policy's)
+RETRY = 30.0                                # a unit systemd refused is retried this often
+EXEMPT = set(os.environ.get("EXEMPT", "tailscaled.service wolf.service").split())
+WHOLE_SLICES = ("user.slice", "machine.slice")
+UNIT_SUFFIXES = ("service", "scope", "slice", "socket", "mount", "swap")
+
+
+def log(msg: str) -> None:
+    print(msg, flush=True)
+
+
+def parse_cpus(text: str) -> set[int]:
+    cpus: set[int] = set()
+    for part in text.strip().split(","):
+        if not part:
+            continue
+        lo, _, hi = part.partition("-")
+        cpus.update(range(int(lo), int(hi or lo) + 1))
+    return cpus
+
+
+def format_cpus(cpus: set[int]) -> str:
+    runs: list[str] = []
+    for c in sorted(cpus):
+        if runs and int(runs[-1].rpartition("-")[2]) == c - 1:
+            runs[-1] = f"{runs[-1].partition('-')[0]}-{c}"
+        else:
+            runs.append(str(c))
+    return ",".join(runs)
+
+
+def read(path: Path) -> str | None:
+    try:
+        return path.read_text().strip()
+    except OSError:
+        return None
+
+
+def config() -> dict:
+    try:
+        return tomllib.loads(CONFIG.read_text())
+    except (OSError, tomllib.TOMLDecodeError) as e:
+        log(f"cannot read {CONFIG} ({e}); using the environment and defaults")
+        return {}
+
+
+def game_identity() -> tuple[str, str]:
+    cfg = config()
+    ct = os.environ.get("GAME_CT") or cfg.get("incus", {}).get("container") or "ffxiv"
+    process = os.environ.get("GAME_PROCESS") or cfg.get("game", {}).get("process") or "ffxiv_dx11.exe"
+    return ct, process[:15]  # the kernel's comm keeps 15 characters
+
+
+class Policy:
+    """The game's CPUs: busy and idle lists and when to switch."""
+
+    def __init__(self, cfg: dict):
+        wolf = cfg.get("wolf", {})
+        pol = cfg.get("incus", {}).get("cpu_policy", {})
+        self.busy = os.environ.get("GAME_CPUS") or wolf.get("cpus_busy") or pol.get("busy_cpus") or ""
+        self.idle = wolf.get("cpus_idle") or pol.get("idle_cpus") or ""
+        self.busy_threshold = int(pol.get("busy_threshold_percent", 25))
+        self.idle_threshold = int(pol.get("idle_threshold_percent", 10))
+        self.busy_after = float(pol.get("busy_after_seconds", 15))
+        self.idle_after = float(pol.get("idle_after_seconds", 90))
+
+    def switches(self) -> bool:
+        """Busy/idle switching needs two CPU lists (a bare count cannot pin a scope)."""
+        return bool(self.busy and self.idle and self.busy != self.idle
+                    and any(ch in self.busy + self.idle for ch in ",-"))
+
+
+def fence_cpus(policy: Policy | None = None) -> set[int] | None:
+    """The online CPUs less the game's, or None when the game's are not known."""
+    if os.environ.get("FENCE_CPUS"):
+        return parse_cpus(os.environ["FENCE_CPUS"])
+    game = (policy or Policy(config())).busy
+    if not game:
+        log("the game's CPUs are unknown (no [wolf] cpus_busy, [incus.cpu_policy] busy_cpus or GAME_CPUS); not fencing")
+        return None
+    fence = parse_cpus(read(CGROUP / "cpuset.cpus.effective") or "") - parse_cpus(game)
+    if not fence:
+        log(f"the game owns every CPU ({game}); not fencing")
+        return None
+    return fence
+
+
+def proc_stat() -> tuple[int, int] | None:
+    """Total and idle jiffies (as cpu-policy reads them)."""
+    line = (read(PROC / "stat") or "").partition("\n")[0].split()
+    if len(line) < 6 or line[0] != "cpu":
+        return None
+    values = [int(v) for v in line[1:]]
+    return sum(values[:8]), values[3] + (values[4] if len(values) > 4 else 0)
+
+
+def usage_usec(cg: Path) -> int | None:
+    for line in (read(cg / "cpu.stat") or "").splitlines():
+        key, _, value = line.partition(" ")
+        if key == "usage_usec":
+            return int(value)
+    return None
+
+
+class Load:
+    """cpu-policy's hysteresis (internal/cpupolicy loadWindow), for a scope."""
+
+    def __init__(self):
+        self.prev: tuple[float, int, int, int] | None = None
+        self.busy_for = self.idle_for = 0.0
+
+    def observe(self, now: float, sample: tuple[int, int] | None, game_usec: int | None,
+                cpus: int, policy: Policy) -> str:
+        """Returns "busy", "idle" or "" (no change)."""
+        prev, self.prev = self.prev, None
+        if sample is None or game_usec is None or cpus <= 0:
+            self.busy_for = self.idle_for = 0.0
+            return "busy"
+        cur = (now, sample[0], sample[1], game_usec)
+        self.prev = cur
+        if prev is None:
+            return ""
+        elapsed = cur[0] - prev[0]
+        total, idle, game = cur[1] - prev[1], cur[2] - prev[2], cur[3] - prev[3]
+        if elapsed <= 0 or elapsed > SAMPLE * 3 or total <= 0 or idle < 0 or game < 0:
+            self.busy_for = self.idle_for = 0.0
+            return "busy"
+        host_busy = (total - min(idle, total)) / total * 100
+        game_busy = game / 1e6 / elapsed / cpus * 100
+        percent = max(0, min(100, round(host_busy - game_busy)))
+        elapsed = min(elapsed, SAMPLE)
+        if percent >= policy.busy_threshold:
+            self.busy_for, self.idle_for = self.busy_for + elapsed, 0.0
+        elif percent <= policy.idle_threshold:
+            self.idle_for, self.busy_for = self.idle_for + elapsed, 0.0
+        else:
+            self.busy_for = self.idle_for = 0.0
+        if self.busy_for >= policy.busy_after:
+            return "busy"
+        if self.idle_for >= policy.idle_after:
+            return "idle"
+        return ""
+
+
+class Fence:
+    def __init__(self, ct: str, comm: str):
+        self.ct, self.comm = ct, comm
+        self.pid: str | None = None
+        self.layout = ""                      # "incus" or "podman", while the game runs
+        self.scope: str | None = None         # podman: the game's machine.slice child
+        self.cpus: set[int] | None = None
+        self.policy: Policy | None = None
+        self.mode = ""                        # podman: "busy" or "idle", what the scope has
+        self.load = Load()
+        self.next_sample = 0.0
+        self.containers: dict[str, str] = {}  # cgroup name -> the cpuset to give back
+        self.units: dict[str, str] = {}       # unit -> its own AllowedCPUs to give back
+        self.refused: dict[str, float] = {}   # unit -> when systemd last refused it
+        self.load_state()
+
+    # --- what is the game doing
+
+    def in_game_ct(self, pid: str) -> bool:
+        text = read(PROC / pid / "cgroup") or ""
+        return f"/lxc.payload.{self.ct}/" in text or text.endswith(f"/lxc.payload.{self.ct}")
+
+    def podman_scope(self, pid: str) -> str | None:
+        """The machine.slice child a process runs in, if it is a container's scope."""
+        for line in (read(PROC / pid / "cgroup") or "").splitlines():
+            path = line.partition("::")[2]
+            parts = path.strip("/").split("/")
+            if len(parts) >= 2 and parts[0] == "machine.slice" and parts[1].startswith("libpod-") \
+                    and parts[1].endswith(".scope") and not parts[1].startswith("libpod-conmon-"):
+                return parts[1]
+        return None
+
+    def find_in(self, root: Path) -> str | None:
+        for d, _, files in os.walk(root):
+            if "cgroup.procs" not in files:
+                continue
+            for pid in (read(Path(d) / "cgroup.procs") or "").split():
+                if read(PROC / pid / "comm") == self.comm:
+                    return pid
+        return None
+
+    def game_running(self) -> bool:
+        if self.pid and read(PROC / self.pid / "comm") == self.comm:
+            if self.layout == "incus" and self.in_game_ct(self.pid):
+                return True
+            if self.layout == "podman" and self.podman_scope(self.pid) == self.scope:
+                return True
+        self.pid = None
+        if pid := self.find_in(CGROUP / f"lxc.payload.{self.ct}"):
+            self.pid, self.layout, self.scope = pid, "incus", None
+            return True
+        machine = CGROUP / "machine.slice"
+        if machine.is_dir():
+            for scope in sorted(machine.glob("libpod-*.scope")):
+                if scope.name.startswith("libpod-conmon-"):
+                    continue
+                if pid := self.find_in(scope):
+                    self.pid, self.layout, self.scope = pid, "podman", scope.name
+                    return True
+        self.layout, self.scope = "", None
+        return False
+
+    # --- what to fence
+
+    def container_cgroups(self) -> list[Path]:
+        own = {f"lxc.payload.{self.ct}", f"lxc.monitor.{self.ct}"} if self.layout != "podman" else set()
+        return sorted(p for pattern in ("lxc.payload.*", "lxc.monitor.*")
+                      for p in CGROUP.glob(pattern) if p.name not in own and p.is_dir())
+
+    def host_units(self) -> list[tuple[str, Path]]:
+        whole = WHOLE_SLICES if self.layout != "podman" else ("user.slice",)
+        units = [(s, CGROUP / s) for s in whole if (CGROUP / s).is_dir()]
+        parents = ["system.slice"]
+        if self.layout == "podman":
+            parents.append("machine.slice")  # its children, never the slice: the game is in it
+        for parent in parents:
+            d = CGROUP / parent
+            if d.is_dir():
+                units += sorted((p.name, p) for p in d.iterdir()
+                                if p.is_dir() and p.name.rpartition(".")[2] in UNIT_SUFFIXES)
+        return [(u, p) for u, p in units if u not in EXEMPT and u != self.scope]
+
+    def unit_path(self, unit: str) -> Path | None:
+        for parent in ("system.slice", "machine.slice", ""):
+            p = CGROUP / parent / unit if parent else CGROUP / unit
+            if p.exists():
+                return p
+        return None
+
+    # --- state, kept so a restart or ExecStopPost can give everything back
+
+    def load_state(self) -> None:
+        for line in (read(STATE) or "").splitlines():
+            kind, _, rest = line.partition("\t")
+            name, _, value = rest.partition("\t")
+            (self.containers if kind == "ct" else self.units)[name] = value
+
+    def save(self) -> None:
+        STATE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = STATE.with_suffix(".tmp")
+        tmp.write_text("".join(f"ct\t{n}\t{v}\n" for n, v in self.containers.items())
+                       + "".join(f"unit\t{n}\t{v}\n" for n, v in self.units.items()))
+        tmp.replace(STATE)
+
+    def systemctl(self, *args: str) -> bool:
+        r = subprocess.run([SYSTEMCTL, *args], capture_output=True, text=True, timeout=30)
+        return r.returncode == 0
+
+    def allowed_cpus(self, units: list[str]) -> dict[str, str]:
+        r = subprocess.run([SYSTEMCTL, "show", "-p", "Id", "-p", "AllowedCPUs", "--", *units],
+                           capture_output=True, text=True, timeout=30)
+        found, ids = {}, iter(units)
+        for block in r.stdout.strip().split("\n\n"):
+            props = dict(line.partition("=")[::2] for line in block.splitlines())
+            found[next(ids, props.get("Id", ""))] = props.get("AllowedCPUs", "")
+        return found
+
+    # --- fence and release
+
+    def engage(self) -> bool:
+        self.policy = Policy(config())
+        self.cpus = fence_cpus(self.policy)
+        self.mode, self.load, self.next_sample = "", Load(), 0.0
+        if self.cpus:
+            where = f"scope {self.scope}" if self.layout == "podman" else f"container {self.ct}"
+            log(f"game running (pid {self.pid}, {where}): fencing everything else onto CPUs {format_cpus(self.cpus)}")
+        return self.cpus is not None
+
+    def set_game_cpus(self, mode: str) -> None:
+        """Podman: give the game's scope its busy or idle CPUs."""
+        pol = self.policy
+        if not pol or not self.scope or mode == self.mode:
+            return
+        cpus = pol.busy if mode == "busy" else pol.idle
+        if self.scope not in self.units:
+            self.units[self.scope] = self.allowed_cpus([self.scope]).get(self.scope, "")
+            self.save()
+        if self.systemctl("set-property", "--runtime", "--", self.scope, f"AllowedCPUs={cpus}"):
+            log(f"the game's scope: {mode}, CPUs {cpus}")
+            self.mode = mode
+        else:
+            log(f"systemd refused to give {self.scope} CPUs {cpus}")
+
+    def balance(self, now: float) -> None:
+        """Podman: cpu-policy's busy/idle switching, for the game's scope."""
+        pol = self.policy
+        if self.layout != "podman" or not pol or not pol.busy:
+            return
+        if not pol.switches():
+            self.set_game_cpus("busy")
+            return
+        if not self.mode:
+            self.set_game_cpus("busy")  # start conservatively, as cpu-policy does
+        if now < self.next_sample:
+            return
+        self.next_sample = now + SAMPLE
+        cg = CGROUP / "machine.slice" / self.scope if self.scope else None
+        wanted = self.load.observe(now, proc_stat(), usage_usec(cg) if cg else None,
+                                   len(parse_cpus(read(CGROUP / "cpuset.cpus.effective") or "")), pol)
+        if wanted:
+            self.set_game_cpus(wanted)
+
+    def assert_fence(self, now: float) -> None:
+        fence, text, changed = self.cpus, format_cpus(self.cpus), False
+        for cg in self.container_cgroups():
+            cur = read(cg / "cpuset.cpus")
+            if cur is None:
+                continue
+            cpus = parse_cpus(cur)
+            if cpus == fence:
+                continue
+            if cpus and cpus <= fence:  # Incus already keeps it off the game's CPUs
+                changed |= self.containers.pop(cg.name, None) is not None
+                continue
+            try:
+                (cg / "cpuset.cpus").write_text(text)
+            except OSError as e:
+                if cg.exists():
+                    log(f"cannot fence {cg.name}: {e}")
+                continue
+            if self.containers.get(cg.name) != cur:
+                self.containers[cg.name] = cur
+                changed = True
+        todo = []
+        for unit, path in self.host_units():
+            cur = read(path / "cpuset.cpus")
+            if cur is not None and (cpus := parse_cpus(cur)) and cpus <= fence:
+                continue
+            if now - self.refused.get(unit, -RETRY) < RETRY:
+                continue
+            todo.append(unit)
+        if todo:
+            originals = self.allowed_cpus([u for u in todo if u not in self.units])
+            for unit in todo:
+                if self.systemctl("set-property", "--runtime", "--", unit, f"AllowedCPUs={text}"):
+                    self.refused.pop(unit, None)
+                    if unit not in self.units:
+                        self.units[unit] = originals.get(unit, "")
+                        changed = True
+                elif unit not in self.refused:
+                    self.refused[unit] = now
+                    log(f"systemd refused to fence {unit}; retrying every {RETRY:.0f}s")
+                else:
+                    self.refused[unit] = now
+        if changed:
+            self.save()
+
+    def release(self) -> None:
+        for name, value in self.containers.items():
+            f = CGROUP / name / "cpuset.cpus"
+            if f.exists():
+                try:
+                    f.write_text(value or "\n")
+                except OSError as e:
+                    log(f"cannot give {name} back its CPUs ({value or 'all'}): {e}")
+        for unit, value in self.units.items():
+            if not self.systemctl("set-property", "--runtime", "--", unit, f"AllowedCPUs={value}"):
+                if self.unit_path(unit):
+                    log(f"systemd refused to give {unit} back its CPUs")
+        if self.containers or self.units:
+            log(f"gave {len(self.containers)} containers and {len(self.units)} units their CPUs back")
+        self.containers.clear()
+        self.units.clear()
+        self.refused.clear()
+        self.mode = ""
+        self.save()
+
+
+def main() -> None:
+    ct, comm = game_identity()
+    fence = Fence(ct, comm)
+    if sys.argv[1:] == ["release"]:
+        fence.release()
+        return
+    if sys.argv[1:] == ["status"]:
+        running = fence.game_running()
+        policy = Policy(config())
+        cpus = fence_cpus(policy)
+        where = f"scope {fence.scope}" if fence.layout == "podman" else f"container {ct}"
+        print(f"game {comm!r}: {'running in ' + where + ', pid ' + str(fence.pid) if running else 'not running'}")
+        print(f"fence: {format_cpus(cpus) if cpus else 'none'}; exempt: {' '.join(sorted(EXEMPT))}")
+        print(f"game CPUs (Podman layout): busy {policy.busy or '-'}, idle {policy.idle or '-'}")
+        for cg in fence.container_cgroups():
+            print(f"  {cg.name}: {read(cg / 'cpuset.cpus') or 'all'} -> effective {read(cg / 'cpuset.cpus.effective')}")
+        for unit, path in fence.host_units():
+            print(f"  {unit}: {read(path / 'cpuset.cpus') or 'all'} -> effective {read(path / 'cpuset.cpus.effective')}")
+        print(f"held: {len(fence.containers)} containers, {len(fence.units)} units")
+        return
+    tried = engaged = False  # tried: this game session already asked for the fence
+    absent = GRACE if fence.containers or fence.units else 0.0  # a restart with nothing to protect gives back at once
+    while True:
+        now = time.monotonic()
+        if fence.game_running():
+            absent = 0.0
+            if not tried:
+                tried, engaged = True, fence.engage()
+            if engaged:
+                fence.assert_fence(now)
+                fence.balance(now)
+        else:
+            absent += POLL
+            if absent >= GRACE:
+                tried = False
+                if engaged or fence.containers or fence.units:
+                    log("game gone: giving every CPU back")
+                    fence.release()
+                    engaged = False
+        time.sleep(POLL)
+
+
+if __name__ == "__main__":
+    main()
