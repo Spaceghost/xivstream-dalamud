@@ -84,7 +84,7 @@ func (f *ghosttyFakeTarget) Exists(p string) bool {
 }
 
 func TestGhosttyAccountUsesOnlyVerifiedNativeIdentity(t *testing.T) {
-	u := &user.User{Username: "native-user", Uid: "1000", Gid: "1000", HomeDir: "/home/native-user"}
+	u := &user.User{Username: "native-user", Uid: "1000", Gid: "1000", HomeDir: t.TempDir()}
 	for _, tc := range []struct {
 		name, explicit string
 		uid            int
@@ -179,6 +179,9 @@ func TestGhosttyExistingUnitMismatchRefusesWithoutWriting(t *testing.T) {
 }
 
 func TestGhosttyActiveAgentIsNeverRestartedOrReplaced(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("native systemd agent lifecycle runs on Linux")
+	}
 	f := ghosttyFake(t)
 	home := "/home/native-user"
 	f.files[filepath.Join(home, ".local/lib/xivstream/ghostty-agent")] = []byte("existing native binary")

@@ -3,7 +3,7 @@ package config
 import (
 	"fmt"
 	"net/netip"
-	"path/filepath"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -140,7 +140,9 @@ var (
 
 // Validate checks the [wolf] section (only when backend = "wolf").
 func (w Wolf) Validate() error {
-	if !filepath.IsAbs(w.Home) || filepath.Clean(w.Home) != w.Home || w.Home == "/" {
+	// These are paths on the Linux Wolf host, even when inspecting a config
+	// from a Windows or macOS client.
+	if !path.IsAbs(w.Home) || path.Clean(w.Home) != w.Home || w.Home == "/" {
 		return fmt.Errorf("wolf.home must be a clean absolute path")
 	}
 	if w.HomeSubvolume == "" || strings.ContainsAny(w.HomeSubvolume, "/,= \t\n") {
@@ -252,7 +254,7 @@ func ParseMount(m string) (host, container, mode string, err error) {
 	if len(parts) == 3 {
 		mode = parts[2]
 	}
-	if !filepath.IsAbs(host) || !filepath.IsAbs(container) || (mode != "ro" && mode != "rw") {
+	if !path.IsAbs(host) || !path.IsAbs(container) || (mode != "ro" && mode != "rw") {
 		return "", "", "", fmt.Errorf("wolf.mounts %q: absolute paths, and ro or rw", m)
 	}
 	return host, container, mode, nil

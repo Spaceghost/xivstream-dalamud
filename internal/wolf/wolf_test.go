@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -55,7 +56,14 @@ func fixture() Setup {
 func allExist(string) bool { return true }
 
 func TestFixtureValidates(t *testing.T) {
-	if err := fixture().Config.Validate(); err != nil {
+	err := fixture().Config.Validate()
+	if runtime.GOOS != "linux" {
+		if err == nil || !strings.Contains(err.Error(), "Linux hosts only") {
+			t.Fatalf("Wolf must refuse a non-Linux host: %v", err)
+		}
+		return
+	}
+	if err != nil {
 		t.Fatal(err)
 	}
 }
@@ -113,6 +121,10 @@ func TestQuadletGenerates(t *testing.T) {
 	out, err := cmd.CombinedOutput()
 	if err != nil || bytes.Contains(out, []byte("converting")) || bytes.Contains(out, []byte("unsupported key")) {
 		t.Fatalf("quadlet: %v\n%s", err, out)
+	}
+	// Podman versions emit either --option value or --option=value.
+	for _, option := range []string{"--device", "--network"} {
+		out = bytes.ReplaceAll(out, []byte(option+"="), []byte(option+" "))
 	}
 	for _, want := range []string{"---wolf.service---", "--device /dev/nvidia0", "--device /dev/nvidia-uvm ", "-v nvidia-driver-vol:/usr/nvidia:rw",
 		"ExecStartPre=/usr/local/bin/xivstream wolf-preflight", "RequiresMountsFor=/var/lib/xivstream/home", "--network host"} {

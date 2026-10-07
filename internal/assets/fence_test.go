@@ -4,12 +4,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
 // TestGameCPUFence runs the fence's Python tests (fake cgroup and /proc trees
 // for the Incus and the Podman layouts; nothing on the host is touched).
 func TestGameCPUFence(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fence is a Unix executable script; Windows cannot execute its shebang")
+	}
 	python, err := exec.LookPath("python3")
 	if err != nil {
 		t.Skip("python3 not installed")

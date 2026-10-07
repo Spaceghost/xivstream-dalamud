@@ -13,7 +13,7 @@ import (
 
 func TestKernelContainerUsageDoesNotCallDaemon(t *testing.T) {
 	got, source, err := containerUsage("ffxiv", func(path string) ([]byte, error) {
-		if path != "/sys/fs/cgroup/lxc.payload.ffxiv/cpu.stat" {
+		if path != filepath.Join("/sys/fs/cgroup", "lxc.payload.ffxiv", "cpu.stat") {
 			t.Fatalf("wrong group: %s", path)
 		}
 		return []byte("usage_usec 746414883524\nuser_usec 634978387494\nsystem_usec 111436496030\n"), nil
