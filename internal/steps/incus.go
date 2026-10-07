@@ -144,13 +144,28 @@ func (b *builder) incus() ([]plan.Step, error) {
 	if dir := HidrawHostDir(b.c); dir != "" {
 		s = append(s, step(host, "Give the container the streamed pads' hidraw nodes",
 			"Sunshine emulates a PlayStation pad ("+b.c.Stream.Gamepad+"); Wine reads those through hidraw, which the host's udev rule copies into "+dir+".",
-			[]string{"mkdir -p " + dir, "incus config device add " + name + " host-hidraw disk source=" + dir + " path=" + ContainerHidrawDir},
-			func() (bool, error) { return hasDevice(name, "host-hidraw"), nil },
+			[]string{"mkdir -p " + dir, "incus config device add/set " + name + " host-hidraw source=" + dir + " path=" + ContainerHidrawDir},
+			func() (bool, error) {
+				if !hasDevice(name, "host-hidraw") {
+					return false, nil
+				}
+				source, err := sys.Output("incus", "config", "device", "get", name, "host-hidraw", "source")
+				return err == nil && strings.TrimSpace(source) == dir, err
+			},
 			func() error {
 				if err := os.MkdirAll(dir, 0o755); err != nil {
 					return err
 				}
-				_, err := sys.Output("incus", "config", "device", "add", name, "host-hidraw", "disk", "source="+dir, "path="+ContainerHidrawDir)
+				var err error
+				if hasDevice(name, "host-hidraw") {
+					_, err = sys.Output("incus", "config", "device", "set", name, "host-hidraw", "source="+dir)
+					if err == nil {
+						// A running bridge watches the old mount inode until restarted.
+						_, err = ct.Run("systemctl", "try-restart", "xivstream-input-bridge.service")
+					}
+				} else {
+					_, err = sys.Output("incus", "config", "device", "add", name, "host-hidraw", "disk", "source="+dir, "path="+ContainerHidrawDir)
+				}
 				return err
 			}))
 	}
