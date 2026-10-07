@@ -47,8 +47,8 @@ if [ "${XIVSTREAM_SESSION_MODE:-game}" = game ]; then
     fi
 fi
 
-# The in-game terminal's agent needs no display (--windows none): it runs
-# beside the game for as long as the session does.
+# The in-game terminal's agent runs beside the game, with its private headless
+# Wayland compositor for app windows, for as long as the session does.
 "$LIB/ghostty-agent.sh" &
 
 # gamescope, nested on Wolf's compositor (a Wayland client of it), gives the
