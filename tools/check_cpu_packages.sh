@@ -4,7 +4,7 @@ set -Eeuo pipefail
 trap 'echo "Package verification failed at line $LINENO: $BASH_COMMAND" >&2' ERR
 repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 dist=$(realpath -- "${1:-$repo/dist}")
-for tool in bwrap python3 rpm rpm2cpio cpio ar tar sha256sum cmp; do
+for tool in bwrap python3 rpm bsdtar ar tar sha256sum cmp; do
     command -v "$tool" >/dev/null || { echo "Missing test dependency: $tool" >&2; exit 1; }
 done
 shopt -s nullglob
@@ -25,12 +25,12 @@ echo "Isolated payloads and evidence: $work"
 # Only named members go to stdout: no package-controlled paths are extracted.
 tar -xOf "${portable[0]}" xivstream > "$work/portable"
 tar -xOf "${portable[0]}" docs/config.md > "$work/config-portable.md"
-# cpio can stop after its selected member, giving a healthy rpm2cpio producer
-# SIGPIPE under pipefail. Check the complete decompression first; selected reads
-# then have no producer whose exit could race the consumer's early close.
-rpm2cpio "${rpms[0]}" > "$work/rpm-payload.cpio"
-cpio -i --quiet --to-stdout ./usr/bin/xivstream < "$work/rpm-payload.cpio" > "$work/rpm"
-cpio -i --quiet --to-stdout ./usr/share/doc/xivstream/config.md < "$work/rpm-payload.cpio" > "$work/config-rpm.md"
+# Ubuntu's rpm2cpio 4.18.2 returns 1 after writing this complete payload,
+# despite both RPM digests passing. Verify the package with rpm, then use
+# libarchive's RPM reader; still compare the extracted bytes below.
+rpm --checksig "${rpms[0]}" > "$work/rpm-digests.txt"
+bsdtar -xOf "${rpms[0]}" /usr/bin/xivstream > "$work/rpm"
+bsdtar -xOf "${rpms[0]}" /usr/share/doc/xivstream/config.md > "$work/config-rpm.md"
 rpm -qp --scripts "${rpms[0]}" > "$work/rpm-scripts.txt"
 test ! -s "$work/rpm-scripts.txt" || { echo 'Unexpected RPM install script' >&2; exit 1; }
 deb_data=$(ar t "${debs[0]}" | sed -n '/^data\.tar\(\.[a-z0-9]*\)\?$/p')

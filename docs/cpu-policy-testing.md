@@ -14,7 +14,7 @@ an isolated writable `/etc`, fake online CPUs, and strict fake `systemctl` and
 modified. A denied user namespace fails the test; there is no unsandboxed fallback.
 
 On a Linux development or disposable CI machine with Go, GoReleaser, Python 3,
-bubblewrap, rpm/rpm2cpio, cpio, binutils, GNU tar and zstd installed:
+bubblewrap, rpm, bsdtar (libarchive-tools), binutils, GNU tar and zstd installed:
 
 ```sh
 go test ./...
