@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -55,6 +56,7 @@ type Config struct {
 	Audio   Audio   `toml:"audio"`
 	Session Session `toml:"session"`
 	Selkies Selkies `toml:"selkies"`
+	Wolf    Wolf    `toml:"wolf"`
 	Mods    Mods    `toml:"mods"`
 }
 
@@ -92,16 +94,31 @@ type Stream struct {
 }
 
 type Incus struct {
-	Container string `toml:"container"`
-	Image     string `toml:"image"`
-	CPU       string `toml:"cpu"`    // limits.cpu; empty = no limit
-	Memory    string `toml:"memory"` // limits.memory; empty = no limit
+	Container string    `toml:"container"`
+	Image     string    `toml:"image"`
+	CPU       string    `toml:"cpu"`    // limits.cpu; empty = no limit
+	Memory    string    `toml:"memory"` // limits.memory; empty = no limit
+	CPUPolicy CPUPolicy `toml:"cpu_policy"`
 	// GPU: PCI address of the card to pass through; empty = the first
 	// discrete GPU found at apply time.
 	GPU string `toml:"gpu"`
 	// Autostart: start the container at boot once the listen address exists.
 	Autostart bool `toml:"autostart"`
 }
+
+// CPUPolicy gives the game a selected CPU set while other host work is busy,
+// and expands it after the host remains idle. Empty BusyCPUs and IdleCPUs
+// disable the policy and leave Incus.CPU as the static limit.
+type CPUPolicy struct {
+	BusyCPUs             string `toml:"busy_cpus"`
+	IdleCPUs             string `toml:"idle_cpus"`
+	BusyThresholdPercent int    `toml:"busy_threshold_percent"`
+	IdleThresholdPercent int    `toml:"idle_threshold_percent"`
+	BusyAfterSeconds     int    `toml:"busy_after_seconds"`
+	IdleAfterSeconds     int    `toml:"idle_after_seconds"`
+}
+
+func (p CPUPolicy) Enabled() bool { return p.BusyCPUs != "" || p.IdleCPUs != "" }
 
 type Share struct {
 	Mode string `toml:"mode"`
@@ -140,7 +157,18 @@ type Mods struct {
 	Testing bool `toml:"testing"`
 	// Companions: install what a plugin needs outside the game (ghostty-agent
 	// for GhosttyDalamud, the almanac gateway link for Almanac).
-	Companions bool `toml:"companions"`
+	Companions bool    `toml:"companions"`
+	Ghostty    Ghostty `toml:"ghostty"`
+}
+
+// Ghostty connects an Incus game to a native agent running as a real host
+// account. No account name is inferred from the container's Session.User.
+type Ghostty struct {
+	HostUser         string `toml:"host_user"`
+	HostLabel        string `toml:"host_label"`
+	HostPort         int    `toml:"host_port"`
+	ProxyPort        int    `toml:"proxy_port"`
+	IncludeContainer bool   `toml:"include_container"`
 }
 
 type Session struct {
@@ -169,14 +197,18 @@ func Default() Config {
 		Stream: Stream{
 			Name: "ffxiv", PortBase: 47989, MaxBitrateKbps: 50000, Codecs: "h264", Gamepad: "x360", WebUser: "ffxiv",
 		},
-		Incus: Incus{Container: "ffxiv", Image: "images:fedora/43", Autostart: true},
+		Incus: Incus{
+			Container: "ffxiv", Image: "images:fedora/43", Autostart: true,
+			CPUPolicy: CPUPolicy{BusyThresholdPercent: 25, IdleThresholdPercent: 10, BusyAfterSeconds: 15, IdleAfterSeconds: 90},
+		},
 		Share: Share{
 			Mode: ShareNone, Gateway: "http://127.0.0.1:41881", Owner: "ffxiv", Margin: 1.25, GraceSeconds: 20,
 		},
 		Audio:   Audio{StreamOnly: true},
 		Session: Session{Headless: true, User: "player"},
 		Selkies: Selkies{Port: 8080, User: "ffxiv"},
-		Mods:    Mods{Repos: []string{DefaultModRepo}, Companions: true},
+		Wolf:    DefaultWolf(),
+		Mods:    Mods{Repos: []string{DefaultModRepo}, Companions: true, Ghostty: Ghostty{HostPort: 7777, ProxyPort: 7780}},
 	}
 }
 
@@ -278,6 +310,9 @@ func Load(path string) (Config, error) {
 }
 
 func (c Config) Validate() error {
+	if err := c.Mods.Ghostty.Validate(); err != nil {
+		return err
+	}
 	switch c.Topology {
 	case TopologyIncus, TopologyHost:
 	default:
@@ -313,7 +348,85 @@ func (c Config) Validate() error {
 	if c.Game.Width <= 0 || c.Game.Height <= 0 || c.Game.FPS <= 0 {
 		return fmt.Errorf("game width, height and fps must be positive")
 	}
+	if c.Backend == BackendWolf {
+		if err := c.Wolf.Validate(); err != nil {
+			return err
+		}
+	}
+	if p := c.Incus.CPUPolicy; p.Enabled() {
+		// Wolf keeps reading the same numbers: game-cpu-fence applies them to
+		// the game's Podman scope (see Wolf.CPUs).
+		if c.Topology != TopologyIncus && c.Backend != BackendWolf {
+			return fmt.Errorf("incus.cpu_policy needs topology = %q (or backend = %q)", TopologyIncus, BackendWolf)
+		}
+		if !validCPUSet(p.BusyCPUs) || !validCPUSet(p.IdleCPUs) {
+			return fmt.Errorf("incus.cpu_policy busy_cpus and idle_cpus must both be CPU counts or lists such as %q and %q", "4-7", "0-7")
+		}
+		if p.IdleThresholdPercent < 0 || p.BusyThresholdPercent > 100 || p.IdleThresholdPercent >= p.BusyThresholdPercent {
+			return fmt.Errorf("incus.cpu_policy thresholds must satisfy 0 <= idle < busy <= 100")
+		}
+		if p.BusyAfterSeconds <= 0 || p.IdleAfterSeconds <= 0 {
+			return fmt.Errorf("incus.cpu_policy transition times must be positive")
+		}
+	}
 	return nil
+}
+
+func (g Ghostty) Validate() error {
+	for _, port := range []int{g.HostPort, g.ProxyPort} {
+		if port < 1024 || port > 65535 {
+			return fmt.Errorf("mods.ghostty host_port and proxy_port must be unprivileged TCP ports (1024–65535)")
+		}
+	}
+	if g.IncludeContainer && g.ProxyPort == 7777 {
+		return fmt.Errorf("mods.ghostty proxy_port must differ from the optional container agent's port 7777")
+	}
+	if g.HostUser != "" && (!safeAccount(g.HostUser) || g.HostUser == "root") {
+		return fmt.Errorf("mods.ghostty.host_user must name an ordinary, non-root host account")
+	}
+	if len(g.HostLabel) > 64 || strings.ContainsAny(g.HostLabel, "\x00\r\n\t") {
+		return fmt.Errorf("mods.ghostty.host_label must be at most 64 bytes without control characters")
+	}
+	for _, ch := range g.HostLabel {
+		if ch < 32 || ch == 127 {
+			return fmt.Errorf("mods.ghostty.host_label must not contain control characters")
+		}
+	}
+	return nil
+}
+
+func safeAccount(s string) bool {
+	if len(s) == 0 || len(s) > 64 || s[0] == '-' {
+		return false
+	}
+	for _, ch := range s {
+		if !(ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch == '_' || ch == '-' || ch == '.') {
+			return false
+		}
+	}
+	return true
+}
+
+func validCPUSet(value string) bool {
+	if !strings.ContainsAny(value, ",-") {
+		n, err := strconv.Atoi(value)
+		return err == nil && n > 0 && strconv.Itoa(n) == value
+	}
+	for _, item := range strings.Split(value, ",") {
+		bounds := strings.Split(item, "-")
+		if len(bounds) > 2 {
+			return false
+		}
+		previous := -1
+		for _, bound := range bounds {
+			n, err := strconv.Atoi(bound)
+			if err != nil || n < 0 || strconv.Itoa(n) != bound || n < previous {
+				return false
+			}
+			previous = n
+		}
+	}
+	return true
 }
 
 // Encode renders the config as TOML, with a header saying where it came from.

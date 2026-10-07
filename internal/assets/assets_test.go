@@ -24,7 +24,7 @@ func TestEveryTemplateRendersForEveryBackend(t *testing.T) {
 			v := view{Config: c, InContainer: true, NVIDIA: nvidia, Headless: true, Encoder: "nvenc",
 				LauncherCommand: "/opt/xivlauncher/XIVLauncher.Core", HostUID: 1001000, HostGID: 1000104, InputMarks: []string{"libvirtualhid"}}
 			for _, name := range []string{"session.sh.tmpl", "launcher.sh.tmpl", "stream.sh.tmpl", "sway.conf.tmpl", "sunshine.conf.tmpl",
-				"session.service", "keyring.service", "prepare.service", "input-bridge.service", "container.service", "gpu-share.service", "udev.rules", "wireplumber.conf"} {
+				"session.service", "keyring.service", "prepare.service", "input-bridge.service", "container.service", "cpu-policy.service", "gpu-share.service", "udev.rules", "wireplumber.conf"} {
 				out, err := Render(name, v)
 				if err != nil {
 					t.Fatalf("%s/%v/%s: %v", backend, nvidia, name, err)
@@ -55,8 +55,11 @@ func TestStreamScriptPerBackend(t *testing.T) {
 	if !strings.Contains(rule, `ATTRS{name}=="*libvirtualhid*"`) || !strings.Contains(rule, "chown 1001000:1000104 $devnode") {
 		t.Errorf("udev rule:\n%s", rule)
 	}
-	if strings.Contains(rule, "hidraw") {
+	if strings.Contains(rule, `SUBSYSTEM=="hidraw"`) {
 		t.Error("an Xbox pad needs no hidraw rule")
+	}
+	if !strings.Contains(rule, `ATTRS{name}=="Wolf *virtual*", GOTO="xivstream_not_wolf_end"`) || !strings.HasSuffix(rule, "LABEL=\"xivstream_not_wolf_end\"\n") {
+		t.Errorf("the rule skips Wolf's devices:\n%s", rule)
 	}
 	ds5 := string(MustRender("udev.rules", view{Config: c, HostUID: 1001000, HostGID: 1000104, InputMarks: []string{"libvirtualhid"}, HidrawDir: "/dev/xivstream/ffxiv"}))
 	for _, want := range []string{`SUBSYSTEM=="hidraw", ACTION=="add", DEVPATH=="/devices/virtual/misc/uhid/*:054[Cc]:*"`,

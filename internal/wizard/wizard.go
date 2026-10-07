@@ -99,6 +99,14 @@ func Run(start config.Config, f detect.Facts, advanced bool, review func(config.
 				return nil
 			}),
 		))
+		if c.Topology == config.TopologyIncus {
+			groups = append(groups, huh.NewGroup(
+				huh.NewInput().Title("CPUs while the host is busy").
+					Description("Examples: 4-7 pins four cores; 4 allows any four. Empty disables dynamic CPU limits.").Value(&c.Incus.CPUPolicy.BusyCPUs),
+				huh.NewInput().Title("CPUs while the host is idle").
+					Description("Examples: 0-7 pins all eight; 8 allows any eight. Set both busy and idle values.").Value(&c.Incus.CPUPolicy.IdleCPUs),
+			))
+		}
 	}
 	groups = append(groups, huh.NewGroup(
 		huh.NewConfirm().Title("Keep all sound inside the stream?").

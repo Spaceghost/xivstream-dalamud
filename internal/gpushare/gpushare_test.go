@@ -41,4 +41,14 @@ func TestProcRunning(t *testing.T) {
 	if !procRunning(proc, "notepad.exe", "") {
 		t.Error("argv[1] under a Wine loader counts")
 	}
+	// Wolf: the game in a Podman session container (topology host: no
+	// container filter, so a game in any cgroup counts).
+	add("13", "Z:\\home\\player\\.xlcore\\ffxiv\\game\\ffxiv_dx11.exe\x00", "0::/machine.slice/libpod-0123abcd.scope/container\n")
+	_ = os.RemoveAll(filepath.Join(proc, "10"))
+	if !procRunning(proc, "ffxiv_dx11.exe", "") {
+		t.Error("the game in a Podman session container was not found")
+	}
+	if procRunning(proc, "ffxiv_dx11.exe", "ffxiv") {
+		t.Error("an Incus filter must not match a Podman game")
+	}
 }

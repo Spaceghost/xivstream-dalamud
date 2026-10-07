@@ -1,0 +1,22 @@
+# xivstream: game-cpu-fence (installed by `xivstream apply`)
+[Unit]
+Description=Keep every other workload off the game's CPUs while FFXIV runs
+Documentation=file:/usr/local/bin/game-cpu-fence
+After=incus.service xivstream-container.service wolf.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/game-cpu-fence
+# Never leave anything fenced without the daemon that would lift it.
+ExecStopPost=/usr/local/bin/game-cpu-fence release
+Restart=always
+RestartSec=5
+RuntimeDirectory=game-cpu-fence
+RuntimeDirectoryPreserve=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

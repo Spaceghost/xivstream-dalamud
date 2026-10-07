@@ -56,6 +56,21 @@
           config = lib.mkIf cfg.enable {
             environment.systemPackages = [ pkg ];
             boot.kernelModules = [ "uinput" "uhid" ];
+            systemd.services.xivstream-cpu-policy = {
+              description = "xivstream: yield game CPUs while the host is busy";
+              wantedBy = [ "multi-user.target" ];
+              after = [ "incus.service" ];
+              wants = [ "incus.service" ];
+              path = [ pkgs.incus ];
+              environment.XIVSTREAM_CONFIG = toString configFile;
+              restartTriggers = [ configFile ];
+              serviceConfig = {
+                ExecStart = "${pkg}/bin/xivstream cpu-policy";
+                Restart = "on-failure";
+                RestartSec = 5;
+                RuntimeDirectory = "xivstream-cpu-policy";
+              };
+            };
             systemd.services.xivstream-gpu-share = {
               description = "xivstream: give the game the GPU's memory while it runs";
               wantedBy = [ "multi-user.target" ];

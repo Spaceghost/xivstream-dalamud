@@ -13,6 +13,12 @@
 # a shell to recover.
 set -u
 export DXVK_FRAME_RATE={{.Game.FPS}}
+# One game per home: a Wolf session on the same (shared) home takes this lock
+# too, and holds it while its game runs. Held here for the session's life.
+if [ -d "$HOME/.xlcore" ] && command -v flock >/dev/null 2>&1; then
+    exec 9>>"$HOME/.xlcore/.xivstream-game.lock"
+    flock -n 9 || { echo "xivstream: another session runs the game on this home; waiting for it to end" >&2; flock 9; }
+fi
 while :; do
     {{.LauncherCommand}}
     sleep 2

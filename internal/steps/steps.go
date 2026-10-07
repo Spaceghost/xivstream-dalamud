@@ -27,6 +27,9 @@ func Build(c config.Config, f detect.Facts) ([]plan.Step, error) {
 		return nil, err
 	}
 	b := &builder{c: c, f: f}
+	if err := b.prepareGhostty(); err != nil {
+		return nil, err
+	}
 	switch {
 	case c.Topology == config.TopologyIncus:
 		return b.incus()
@@ -45,8 +48,9 @@ func Build(c config.Config, f detect.Facts) ([]plan.Step, error) {
 }
 
 type builder struct {
-	c config.Config
-	f detect.Facts
+	c       config.Config
+	f       detect.Facts
+	ghostty *ghosttySetup
 }
 
 // view is what the templates see.
