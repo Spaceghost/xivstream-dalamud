@@ -74,6 +74,7 @@ func TestWolfPlan(t *testing.T) {
 		"Write the almanac-gateway forward",
 		"Start the session's forwards",
 		"Write Wolf's Quadlet unit",
+		"Allow Wine fsync in the session's seccomp policy",
 		"Put xivstream's app into Wolf's config",
 		"Install game-cpu-fence",
 		"Run game-cpu-fence",

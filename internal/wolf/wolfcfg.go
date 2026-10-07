@@ -28,7 +28,7 @@ func CreateJSON(s Setup) string {
 		// MKNOD for Wolf's hot-plugged pads (docker exec ... mknod); the rest is
 		// the least any upstream app runs with.
 		"CapAdd":            []string{"NET_RAW", "MKNOD", "NET_ADMIN"},
-		"SecurityOpt":       []string{"label=disable"}, // the home is unlabeled_t; never relabel 95 GB
+		"SecurityOpt":       []string{"label=disable", "seccomp=" + SessionSeccompFile}, // keep Podman's policy, allow Wine's fsync
 		"DeviceCgroupRules": []string{"c 13:* rmw"},
 	}
 	if mem, _ := w.MemoryBytes(); mem > 0 {

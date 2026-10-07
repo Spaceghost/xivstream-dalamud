@@ -56,6 +56,10 @@ What xivstream does:
 
 ## Wolf
 
+The session keeps Podman’s configured seccomp policy, with `futex_waitv` allowed for Wine’s fsync. Fedora’s default policy returns `EPERM` for that syscall: Wine helpers can spin and FFXIV can exit before its graphics finish starting. Apply and Wolf’s startup preflight derive `/etc/xivstream/wolf-session-seccomp.json` from the host’s current policy; other restrictions remain intact. A missing or invalid base policy fails setup rather than disabling seccomp. Existing sessions need restarting to pick up a policy change.
+
+Ghostty app windows use the agent’s private wlroots compositor on `ghostty-xivstream`, separate from Wolf’s streaming display and nested Gamescope. The session requests the Wayland backend with software rendering and uses the shared home’s bundled libraries. A build without the backend reports windows unavailable while terminals remain usable; Fedora 43’s generic agent package does not include wlroots 0.20.
+
 <https://github.com/games-on-whales/wolf>, docs at <https://games-on-whales.github.io/wolf/stable/>
 
 **Experimental:** xivstream's Wolf setup is generated, tested against golden files and Podman's

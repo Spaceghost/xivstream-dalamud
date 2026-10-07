@@ -2,6 +2,7 @@ package steps
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -385,6 +386,18 @@ func (b *builder) wolf() ([]plan.Step, error) {
 		}
 	}
 
+	add(step(host, "Allow Wine fsync in the session's seccomp policy", "Derive Podman's configured policy, allowing only futex_waitv; Fedora otherwise returns EPERM and Wine's helpers spin.",
+		[]string{"derive " + wolf.SessionSeccompFile + " from podman info's seccompProfilePath"},
+		func() (bool, error) {
+			data, err := sessionSeccomp()
+			if err != nil {
+				return false, err
+			}
+			old, err := os.ReadFile(wolf.SessionSeccompFile)
+			return err == nil && bytes.Equal(old, data), nil
+		},
+		func() error { return WriteSessionSeccomp() }))
+
 	add(step(host, "Put xivstream's app into Wolf's config", "Created from Wolf's pinned default (v7) when missing; otherwise merged: hostname, uuid, pairings and encoders are kept.",
 		[]string{"xivstream wolf-config  (" + wolf.ConfigFile + ")"},
 		func() (bool, error) {
@@ -533,6 +546,9 @@ func RunDriverVolume(log func(string)) error {
 // WriteWolfConfig is `xivstream wolf-config`: Wolf's config with xivstream's
 // app in it, written only when it changes (the previous file kept as .bak).
 func WriteWolfConfig(s wolf.Setup, log func(string)) error {
+	if err := WriteSessionSeccomp(); err != nil {
+		return err
+	}
 	old, err := os.ReadFile(wolf.ConfigFile)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -565,6 +581,49 @@ func WriteWolfConfig(s wolf.Setup, log func(string)) error {
 		log("updated " + wolf.ConfigFile + " (previous: " + wolf.ConfigFile + ".bak)")
 	}
 	return nil
+}
+
+// sessionSeccomp uses the policy Podman actually configured, including local
+// overrides. An unavailable or invalid base is an error, never unconfined.
+func sessionSeccomp() ([]byte, error) {
+	info, err := sys.Output("podman", "info", "--format", "json")
+	if err != nil {
+		return nil, err
+	}
+	var parsed struct {
+		Host struct {
+			Security struct {
+				Enabled bool   `json:"seccompEnabled"`
+				Path    string `json:"seccompProfilePath"`
+			} `json:"security"`
+		} `json:"host"`
+	}
+	if err := json.Unmarshal([]byte(info), &parsed); err != nil {
+		return nil, fmt.Errorf("Podman security info: %w", err)
+	}
+	security := parsed.Host.Security
+	if !security.Enabled || !filepath.IsAbs(security.Path) || security.Path == wolf.SessionSeccompFile {
+		return nil, fmt.Errorf("Podman must supply an enabled base seccomp policy with an absolute path")
+	}
+	base, err := os.ReadFile(security.Path)
+	if err != nil {
+		return nil, err
+	}
+	return wolf.SessionSeccomp(base)
+}
+
+// WriteSessionSeccomp refreshes the derived policy at apply and every Wolf
+// start, so host policy updates also reach newly created game sessions.
+func WriteSessionSeccomp() error {
+	data, err := sessionSeccomp()
+	if err != nil {
+		return err
+	}
+	old, err := os.ReadFile(wolf.SessionSeccompFile)
+	if err == nil && bytes.Equal(old, data) {
+		return nil
+	}
+	return (plan.Local{}).WriteFile(wolf.SessionSeccompFile, data, 0o644, "")
 }
 
 // BuildSessionImage builds the session image from the embedded context and

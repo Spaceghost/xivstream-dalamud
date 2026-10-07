@@ -13,7 +13,8 @@
     "NetworkMode": "xivstream",
     "Privileged": false,
     "SecurityOpt": [
-      "label=disable"
+      "label=disable",
+      "seccomp=/etc/xivstream/wolf-session-seccomp.json"
     ]
   },
   "NetworkingConfig": {
