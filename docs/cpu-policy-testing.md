@@ -16,6 +16,8 @@ modified. A denied user namespace fails the test; there is no unsandboxed fallba
 On a Linux development or disposable CI machine with Go, GoReleaser, Python 3,
 bubblewrap, rpm, bsdtar (libarchive-tools), binutils, GNU tar and zstd installed:
 
+On Ubuntu with restricted user namespaces, bubblewrap also needs an AppArmor profile allowing its namespace operations. CI prepares a trusted copy with its own profile only on the disposable GitHub-hosted runner; it keeps the system-wide restriction enabled. See [Ubuntu’s explanation](https://discourse.ubuntu.com/t/understanding-apparmor-user-namespace-restriction/58007). The tests retain their networkless namespaces and do not fall back to an unsandboxed run.
+
 ```sh
 go test ./...
 goreleaser release --snapshot --skip=publish --parallelism=1

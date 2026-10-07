@@ -33,7 +33,9 @@ jobs:
           version: "~> v2"
           args: release --snapshot --clean --skip=publish
       - name: Install isolated package-test dependencies
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap rpm libarchive-tools binutils zstd
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap apparmor rpm libarchive-tools binutils zstd
+      - name: Prepare the isolated package-test sandbox
+        run: bash tools/prepare_package_sandbox.sh
       - name: Check packaged CPU policy without a real service or game
         run: bash tools/check_cpu_packages.sh dist
       - name: Check Ghostty owner helper in an isolated synthetic home
