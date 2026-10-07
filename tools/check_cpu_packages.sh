@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Test actual Linux/amd64 package payloads, never install them on this machine.
-set -euo pipefail
+set -Eeuo pipefail
+trap 'echo "Package verification failed at line $LINENO: $BASH_COMMAND" >&2' ERR
 repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 dist=$(realpath -- "${1:-$repo/dist}")
 for tool in bwrap python3 rpm rpm2cpio cpio ar tar sha256sum cmp; do

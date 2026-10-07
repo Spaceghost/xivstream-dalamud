@@ -3,7 +3,7 @@ package wolf
 import (
 	"fmt"
 	"os"
-	"path/filepath"
+	"path"
 	"strings"
 )
 
@@ -62,7 +62,7 @@ func SubvolumeExists(run Runner, device, subvol string) (bool, error) {
 	if top == "" {
 		return false, fmt.Errorf("the filesystem's top level is not mounted; apply mounts it to look")
 	}
-	_, err := run("btrfs", "subvolume", "show", filepath.Join(top, subvol))
+	_, err := run("btrfs", "subvolume", "show", path.Join(top, subvol))
 	return err == nil, nil
 }
 
@@ -82,7 +82,7 @@ func CreateSubvolume(run Runner, device, subvol string) error {
 		defer func() { _, _ = run("umount", dir) }()
 		top = dir
 	}
-	path := filepath.Join(top, subvol)
+	path := path.Join(top, subvol)
 	if _, err := run("btrfs", "subvolume", "show", path); err == nil {
 		return nil
 	}
