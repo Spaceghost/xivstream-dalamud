@@ -60,6 +60,8 @@ The session keeps Podman’s configured seccomp policy, with `futex_waitv` allow
 
 Ghostty app windows use the agent’s private wlroots compositor on `ghostty-xivstream`, separate from Wolf’s streaming display and nested Gamescope. The session requests the Wayland backend with software rendering and uses the shared home’s bundled libraries. A build without the backend reports windows unavailable while terminals remain usable; Fedora 43’s generic agent package does not include wlroots 0.20.
 
+The launcher and game disable Gamescope's optional Vulkan WSI bypass layer. On the Quadro P4000, that layer rejects FFXIV's `VK_FORMAT_R8G8B8A8_UNORM` swapchain and produces a fatal DirectX error. The normal Xwayland Vulkan presentation path still runs inside Gamescope and uses the resolution requested by Moonlight. Choose 1080p, 1440p, 4K, or a custom size in Moonlight before starting a new stream; resuming an existing session retains its original display size.
+
 <https://github.com/games-on-whales/wolf>, docs at <https://games-on-whales.github.io/wolf/stable/>
 
 **Experimental:** xivstream's Wolf setup is generated, tested against golden files and Podman's
