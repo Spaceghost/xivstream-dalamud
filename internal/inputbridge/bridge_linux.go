@@ -94,7 +94,7 @@ func (b *Bridge) Run() error {
 	if err != nil {
 		return fmt.Errorf("inotify: %w", err)
 	}
-	inputWD, err := unix.InotifyAddWatch(fd, b.InputDir, unix.IN_CREATE|unix.IN_DELETE)
+	inputWD, err := unix.InotifyAddWatch(fd, b.InputDir, unix.IN_CREATE|unix.IN_DELETE|unix.IN_ATTRIB)
 	if err != nil {
 		return fmt.Errorf("inotify on %s: %w", b.InputDir, err)
 	}
@@ -138,7 +138,7 @@ func (b *Bridge) Run() error {
 				b.hidrawAdded(name, false) // ATTRIB: the host's chown landed
 			case int(ev.Wd) == hidWD && ev.Mask&unix.IN_DELETE != 0:
 				b.hidrawRemoved(name)
-			case int(ev.Wd) == inputWD && ev.Mask&unix.IN_CREATE != 0:
+			case int(ev.Wd) == inputWD && ev.Mask&(unix.IN_CREATE|unix.IN_ATTRIB) != 0:
 				b.added(name, false)
 			case int(ev.Wd) == inputWD && ev.Mask&unix.IN_DELETE != 0:
 				b.removed(name)
@@ -199,19 +199,23 @@ func (b *Bridge) added(node string, startup bool) {
 	if props == nil {
 		return
 	}
-	b.known[node] = props
 	// After a restart of this service, devices announced by the previous run
 	// are already in udev (and open in libinput); a second "add" would give
 	// sway duplicate keyboards and mice.
 	if startup && os.Getenv("XIVSTREAM_REANNOUNCE") == "" {
 		if _, err := os.Stat(filepath.Join(b.UdevData, "c"+props["MAJOR"]+":"+props["MINOR"])); err == nil {
+			b.known[node] = props
 			return
 		}
 	}
-	b.waitUntilOurs(node)
+	if !b.waitUntilOurs(node) {
+		return // A later ownership change retries this node through IN_ATTRIB.
+	}
 	if err := b.inject("add", props); err != nil {
 		log.Printf("add %s: %v", props["DEVNAME"], err)
+		return
 	}
+	b.known[node] = props
 }
 
 func (b *Bridge) removed(node string) {
@@ -296,19 +300,20 @@ func (b *Bridge) hidrawRemoved(node string) {
 // waitUntilOurs: the host's udev hands each node to the container with a chown
 // that lands a little after the node appears. Announcing before it would have
 // libinput try the node while it is still unreadable here, and give up.
-func (b *Bridge) waitUntilOurs(node string) {
+func (b *Bridge) waitUntilOurs(node string) bool {
 	path := filepath.Join(b.InputDir, node)
 	for i := 0; i < 250; i++ {
 		var st unix.Stat_t
 		if err := unix.Stat(path, &st); err != nil {
-			return
+			return false
 		}
 		if int(st.Gid) == b.inputGID {
-			return
+			return true
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 	log.Printf("warning: %s never became group input; is the host's xivstream udev rule installed?", path)
+	return false
 }
 
 // Message builds the netlink message the kernel re-broadcasts as a uevent.
