@@ -5,6 +5,7 @@
 # seconds, not a clean exit.
 [Unit]
 Description=xivstream: Sunshine in the ffxiv Incus container (fallback for Wolf)
+RequiresMountsFor=/var/lib/xivstream/home
 Conflicts=wolf.service
 After=wolf.service xivstream-wolf-firewall.service incus.service tailscaled.service network-online.target
 # cpu-policy (busy/idle limits.cpu for the container) runs while this does.
@@ -21,3 +22,6 @@ ExecStop=/usr/local/bin/xivstream stop-container
 ExecStopPost=-/usr/bin/systemctl stop --no-block xivstream-cpu-policy.service
 TimeoutStartSec=600
 TimeoutStopSec=150
+
+[Install]
+WantedBy=multi-user.target

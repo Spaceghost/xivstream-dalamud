@@ -193,8 +193,8 @@ func TestUnits(t *testing.T) {
 	f := s.Wolf.Forwards[0]
 	golden(t, "xivstream-fwd-almanac-gateway.socket", ForwardSocket(s, f))
 	golden(t, "xivstream-fwd-almanac-gateway.service", ForwardService(s, f))
-	if bytes.Contains(FallbackUnitFile(s), []byte("[Install]")) {
-		t.Error("with Wolf the default, the fallback is not started at boot")
+	if !bytes.Contains(FallbackUnitFile(s), []byte("[Install]")) {
+		t.Error("the fallback must remain enableable when initially staged with Wolf as default")
 	}
 	s.Wolf.Autostart = false
 	if !bytes.Contains(FallbackUnitFile(s), []byte("[Install]\nWantedBy=multi-user.target\n")) || bytes.Contains(Quadlet(s), []byte("[Install]")) {

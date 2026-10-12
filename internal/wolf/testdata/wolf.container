@@ -49,6 +49,7 @@ Environment=WOLF_USE_ZERO_COPY=FALSE
 Environment=WOLF_STOP_CONTAINER_ON_EXIT=TRUE
 
 [Service]
+Environment=XIVSTREAM_CONFIG=/etc/xivstream/config.wolf.toml
 # The first start pulls the image; stopping lets Wolf end its sessions.
 TimeoutStartSec=900
 TimeoutStopSec=60
