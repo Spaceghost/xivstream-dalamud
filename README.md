@@ -46,6 +46,11 @@ xivstream doctor                 # is everything still in place?
 xivstream pair 1234 ipad         # pair the Moonlight client showing PIN 1234
 ```
 
+Sunshine pairing selects the pending request before submitting its PIN. If
+several clients are waiting, use `xivstream pair --client IP 1234 NAME`
+(Sunshine also accepts a pairing ID). Older Sunshine versions without pending
+request discovery continue to accept a PIN without `--client`.
+
 Each step checks whether it is already done, so `apply` is safe to re-run after a failure,
 a config edit or an upgrade. A minimal config:
 
