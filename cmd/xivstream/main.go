@@ -370,7 +370,7 @@ func runDoctor(args []string) error {
 func runPair(args []string) error {
 	fs := flag.NewFlagSet("pair", flag.ExitOnError)
 	path := configFlag(fs)
-	client := fs.String("client", "", "Wolf: the address of the client to pair, when several are waiting")
+	client := fs.String("client", "", "address of the client to pair when several are waiting (Sunshine also accepts a pairing ID)")
 	_ = fs.Parse(args)
 	if fs.NArg() < 1 {
 		return errors.New("usage: xivstream pair [--client IP] PIN [NAME]")
@@ -400,7 +400,7 @@ func runPair(args []string) error {
 	if c.Topology == config.TopologyIncus {
 		t = plan.Incus{Container: c.Incus.Container}
 	}
-	if err := sunshine.Pair(t, c.Stream.PortBase+1, c.Stream.WebUser, strings.TrimSpace(string(pw)), fs.Arg(0), name); err != nil {
+	if err := sunshine.Pair(t, c.Stream.PortBase+1, c.Stream.WebUser, strings.TrimSpace(string(pw)), fs.Arg(0), name, *client); err != nil {
 		return err
 	}
 	fmt.Println("Paired.")
