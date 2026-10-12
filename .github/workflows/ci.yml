@@ -19,6 +19,9 @@ jobs:
       - run: go vet ./...
       - run: go test ./...
       - run: go build ./cmd/xivstream
+      - name: Check backend switching without a service or game
+        if: runner.os == 'Linux'
+        run: python3 tools/test_backend_switch.py
   release-dry-run:
     runs-on: ubuntu-latest
     steps:

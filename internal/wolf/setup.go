@@ -63,6 +63,7 @@ const (
 
 	FallbackUnit   = "xivstream-sunshine.service"
 	FallbackConfig = "/etc/xivstream/sunshine.toml"
+	StagedConfig   = "/etc/xivstream/config.wolf.toml"
 
 	DefaultBin = "/usr/local/bin/xivstream"
 )

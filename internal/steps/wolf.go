@@ -156,6 +156,18 @@ func (b *builder) wolf() ([]plan.Step, error) {
 			exists(host, wolf.FallbackConfig),
 			func() error { return host.WriteFile(wolf.FallbackConfig, data, 0o600, "") }))
 	}
+	// Wolf's preflight must keep reading Wolf settings after the main config
+	// switches to Sunshine. Neither backend shares the other's runtime config.
+	staged, err := c.Encode()
+	if err != nil {
+		return nil, err
+	}
+	add(plan.File(host, wolf.StagedConfig, staged, 0o600, "",
+		"Keep Wolf settings for switching back", "The Wolf service reads this file even while Sunshine is the default."))
+	if s.Fallback {
+		add(plan.File(host, "/usr/local/bin/xivstream-backend", assets.Raw("xivstream-backend"), 0o755, "",
+			"Install the safe Sunshine/Wolf switch", "Refuses while the game runs; selects the backend now and at boot, retaining both configs and pairings."))
+	}
 
 	// Kernel modules: uhid for Wolf's DualSense; nvidia_uvm (CUDA, the encoder)
 	// and nvidia_modeset are otherwise only loaded once something asks.
@@ -364,7 +376,7 @@ func (b *builder) wolf() ([]plan.Step, error) {
 	if s.Fallback {
 		fb := wolf.FallbackUnit
 		if c.Wolf.Autostart {
-			// Before its file loses [Install], or disable could not find the link.
+			// The fallback remains enableable, but only the selected backend boots.
 			add(step(host, "Start Wolf at boot, not the Sunshine fallback", "", []string{"systemctl disable " + fb},
 				func() (bool, error) { return !enabled(fb), nil },
 				func() error { _, err := sys.Output("systemctl", "disable", fb); return err }))

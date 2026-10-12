@@ -1,0 +1,159 @@
+#!/usr/bin/python3
+"""Select this machine's staged FFXIV backend and its boot default."""
+import fcntl
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+import tomllib
+
+CONFIG = Path('/etc/xivstream/config.toml')
+WOLF_CONFIG = Path('/etc/xivstream/config.wolf.toml')
+SUNSHINE_CONFIG = Path('/etc/xivstream/sunshine.toml')
+QUADLET = Path('/etc/containers/systemd/wolf.container')
+UNITS = {'sunshine': 'xivstream-sunshine.service', 'wolf': 'wolf.service'}
+PROC = Path('/proc')
+
+
+def run(*args):
+    subprocess.run(args, check=True, timeout=660)
+
+
+def active(unit):
+    return subprocess.run(['systemctl', 'is-active', '--quiet', unit]).returncode == 0
+
+
+def atomic_write(path, data, mode):
+    fd, name = tempfile.mkstemp(prefix='.' + path.name + '-', dir=path.parent)
+    try:
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, 'wb') as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(name, path)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+
+def game_pids():
+    result = []
+    process = tomllib.loads(CONFIG.read_text()).get('game', {}).get('process', 'ffxiv_dx11.exe')[:15]
+    for p in PROC.iterdir():
+        if not p.name.isdigit():
+            continue
+        try:
+            if (p / 'comm').read_text().strip() == process:
+                result.append(p.name)
+        except (FileNotFoundError, ProcessLookupError):
+            pass
+    return result
+
+
+def status():
+    cfg = tomllib.loads(CONFIG.read_text())
+    print('Configured backend:', cfg['backend'])
+    for name, unit in UNITS.items():
+        print(name + ':', 'running' if active(unit) else 'stopped')
+    pids = game_pids()
+    print('FFXIV:', 'running (PID ' + ', '.join(pids) + ')' if pids else 'closed')
+    print('Shared home:', tomllib.loads(WOLF_CONFIG.read_text())['wolf']['home'])
+
+
+def set_boot(target):
+    # Quadlet generates its own boot links; systemctl enable/disable cannot
+    # select a generated unit. Keep the source's Install section authoritative.
+    text = QUADLET.read_text()
+    text, count = re.subn(r'(?m)^WantedBy=multi-user.target\n?', '', text)
+    if count > 1 or text.count('[Install]') > 1:
+        raise RuntimeError('Unexpected Wolf Quadlet Install section')
+    if target == 'wolf':
+        if '[Install]' in text:
+            text = text.replace('[Install]', '[Install]\nWantedBy=multi-user.target')
+        else:
+            text = text.rstrip() + '\n\n[Install]\nWantedBy=multi-user.target\n'
+    atomic_write(QUADLET, text.encode(), 0o644)
+    wolf = WOLF_CONFIG.read_text()
+    head, sep, tail = wolf.partition('[wolf]')
+    if not sep:
+        raise RuntimeError('Wolf config has no [wolf] section')
+    tail, count = re.subn(r'(?m)^([ \t]*)autostart[ \t]*=[ \t]*(true|false)[ \t]*$',
+                         lambda m: m[1] + 'autostart = ' + str(target == 'wolf').lower(), tail, count=1)
+    if count != 1:
+        raise RuntimeError('Wolf config has no explicit autostart setting')
+    atomic_write(WOLF_CONFIG, (head + sep + tail).encode(), 0o600)
+    run('systemctl', 'daemon-reload')
+    # The fallback requests cpu-policy while it runs; neither Incus-only unit
+    # starts independently at boot and competes with the selected backend.
+    run('systemctl', 'disable', 'xivstream-container.service', 'xivstream-cpu-policy.service')
+    run('systemctl', 'enable' if target == 'sunshine' else 'disable', UNITS['sunshine'])
+
+
+def switch(target):
+    source = SUNSHINE_CONFIG if target == 'sunshine' else WOLF_CONFIG
+    cfg = tomllib.loads(source.read_text())
+    if cfg.get('backend') != target:
+        raise RuntimeError('Staged config does not match ' + target)
+    if cfg.get('topology') != ('incus' if target == 'sunshine' else 'host'):
+        raise RuntimeError('Unexpected topology for ' + target)
+    current = tomllib.loads(CONFIG.read_text())['backend']
+    if current not in UNITS:
+        raise RuntimeError('Only staged Sunshine/Wolf setups support this switch')
+    if current == target and active(UNITS[target]):
+        status()
+        return
+    pids = game_pids()
+    if pids:
+        raise RuntimeError('Log out and quit FFXIV before switching (PID ' + ', '.join(pids) + ')')
+    home = tomllib.loads(WOLF_CONFIG.read_text())['wolf']['home']
+    if not (Path(home) / '.xlcore/launcher.ini').is_file():
+        raise RuntimeError('The shared game home is missing')
+    previous = {p: p.read_bytes() for p in (CONFIG, QUADLET, WOLF_CONFIG)}
+    was_running = active(UNITS[current]) if current in UNITS else False
+    other = 'wolf' if target == 'sunshine' else 'sunshine'
+    try:
+        run('systemctl', 'stop', UNITS[other])
+        if target == 'wolf':
+            run('systemctl', 'stop', 'xivstream-cpu-policy.service')
+        set_boot(target)
+        atomic_write(CONFIG, source.read_bytes(), 0o600)
+        run('systemctl', 'start', UNITS[target])
+        run('systemctl', 'restart', 'xivstream-gpu-share.service')
+        if not active(UNITS[target]):
+            raise RuntimeError(target + ' did not become active')
+    except Exception:
+        # Restore the prior configuration and boot choice. Do not restart a
+        # previous backend unless it was running when this command began.
+        run('systemctl', 'stop', UNITS[target])
+        for path, data in previous.items():
+            atomic_write(path, data, 0o644 if path == QUADLET else 0o600)
+        set_boot(current)
+        if was_running:
+            run('systemctl', 'start', UNITS[current])
+            run('systemctl', 'restart', 'xivstream-gpu-share.service')
+        raise
+    print('Selected ' + target + ' now and at boot. Moonlight pairings were preserved.')
+    status()
+
+
+def main():
+    if len(sys.argv) != 2 or sys.argv[1] not in ('sunshine', 'wolf', 'status'):
+        sys.exit('Usage: sudo xivstream-backend sunshine|wolf|status\nLog out and quit FFXIV before switching.')
+    if os.geteuid() != 0:
+        sys.exit('Run with sudo.')
+    with open('/run/xivstream-backend.lock', 'w') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if sys.argv[1] == 'status':
+            status()
+        else:
+            switch(sys.argv[1])
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except (RuntimeError, OSError, subprocess.SubprocessError) as e:
+        sys.exit(str(e))

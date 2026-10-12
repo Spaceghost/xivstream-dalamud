@@ -64,8 +64,10 @@ The launcher and game disable Gamescope's optional Vulkan WSI bypass layer. On t
 
 <https://github.com/games-on-whales/wolf>, docs at <https://games-on-whales.github.io/wolf/stable/>
 
-**Experimental:** xivstream's Wolf setup is generated, tested against golden files and Podman's
-own Quadlet generator, but has not yet carried a real cutover. It runs with `topology = "host"`
+**Experimental:** xivstream's Wolf setup has host tests and a live cutover on Fedora with a Quadro P4000.
+That cutover returned to Sunshine while performance and end-to-end acceptance remain incomplete.
+CPU affinity was observed working on CPUs 4–7; pinning alone does not establish comparable frame times
+or streaming latency. It runs with `topology = "host"`
 only (Wolf runs its sessions as containers itself; inside an Incus container upstream supports
 only a privileged LXC with nested Docker).
 
@@ -247,9 +249,33 @@ Stage while playing; the switch itself is one planned stop.
    `sudo incus config device add ffxiv home disk source=/var/lib/xivstream/home path=/home/player shift=true`.
    Until then the fallback plays on the guest's own, older home.
 
-To fall back: quit the session in Moonlight, then `sudo systemctl start xivstream-sunshine`
-(it stops Wolf and removes Wolf's session containers first). `sudo systemctl start wolf`
-switches back. To undo the switch entirely: fall back, remove Wolf's Quadlet
+After Wolf has been staged, use the installed switch helper:
+
+```sh
+sudo xivstream-backend status
+sudo xivstream-backend sunshine
+sudo xivstream-backend wolf
+```
+
+Log out and quit FFXIV first. The helper refuses while the configured game process
+runs, serializes switches, preserves both backend configs and pairings, and selects
+the backend both now and at boot. Wolf's preflight reads `config.wolf.toml` even when
+the main config selects Sunshine. A failed startup restores the previous config and
+restarts the previous backend if it was running. The shared home must already be
+mounted and bound into the fallback as described above; the helper does not copy or
+remap game data. Clients paired only to Wolf still need a Sunshine pairing.
+
+Keep Sunshine selected until a matched client/game workload establishes Wolf's
+game frame times, stream frame drops, hardware encoder use and encode/network/decode
+latency at the same resolution, frame rate, codec and bitrate. Controller and audio
+acceptance are separate from those measurements.
+
+The underlying service commands also work after the game exits:
+`sudo systemctl start xivstream-sunshine` stops Wolf and removes its session containers;
+`sudo systemctl start wolf` switches back. They do not select the boot default or check
+for an active game, so use the helper for routine switching.
+
+To undo the switch entirely: fall back, remove Wolf's Quadlet
 (`sudo rm /etc/containers/systemd/wolf.container && sudo systemctl daemon-reload`), put the
 old config back (`sudo cp /etc/xivstream/sunshine.toml /etc/xivstream/config.toml`) and
 `sudo xivstream apply`, which re-enables `xivstream-container` and the CPU policy. The
