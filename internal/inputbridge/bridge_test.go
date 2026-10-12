@@ -4,9 +4,46 @@ package inputbridge
 
 import (
 	"encoding/binary"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// A device may exist before the host's ownership rule has completed. Sending
+// its add event anyway makes libinput abandon it; it must remain retryable.
+func TestUnownedDeviceRemainsRetryable(t *testing.T) {
+	dir := t.TempDir()
+	inputDir, sysDir := filepath.Join(dir, "dev/input"), filepath.Join(dir, "sys")
+	deviceDir := filepath.Join(sysDir, "class/input/event99")
+	for _, p := range []string{inputDir, filepath.Join(deviceDir, "device")} {
+		if err := os.MkdirAll(p, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for p, data := range map[string]string{
+		filepath.Join(inputDir, "event99"):      "",
+		filepath.Join(deviceDir, "device/name"): "libvirtualhid Mouse",
+		filepath.Join(deviceDir, "uevent"):      "MAJOR=13\nMINOR=163\nDEVNAME=input/event99\n",
+	} {
+		if err := os.WriteFile(p, []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	b := &Bridge{InputDir: inputDir, SysDir: sysDir, UdevData: filepath.Join(dir, "udev"), Marks: Marks, inputGID: os.Getgid() + 1, nl: -1, known: map[string]map[string]string{}}
+	b.added("event99", false)
+	if b.known["event99"] != nil {
+		t.Fatal("unreadable device was marked announced, preventing ownership-change retry")
+	}
+	// Ownership becoming correct is sufficient to release the permission gate.
+	b.inputGID = os.Getgid()
+	if !b.waitUntilOurs("event99") {
+		t.Fatal("owned device should be ready")
+	}
+	if b.waitUntilOurs("event100") {
+		t.Fatal("a vanished device must not be announced")
+	}
+}
 
 func TestMessage(t *testing.T) {
 	props := map[string]string{"DEVPATH": "/devices/virtual/input/input9/event5", "MAJOR": "13", "MINOR": "69",
